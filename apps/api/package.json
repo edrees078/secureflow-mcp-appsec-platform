@@ -8,10 +8,29 @@
   "dependencies": {
     "@secureflow/domain": "workspace:*",
     "@secureflow/schemas": "workspace:*",
-    "@secureflow/shared": "workspace:*"
+    "@secureflow/shared": "workspace:*",
+    "cors": "2.8.6",
+    "dotenv": "16.4.7",
+    "express": "5.3.0",
+    "helmet": "8.3.0",
+    "pino": "10.4.0",
+    "pino-http": "11.0.0",
+    "zod": "4.6.7"
   },
   "scripts": {
     "build": "tsc -b",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "typecheck": "tsc -b"
+  },
+  "devDependencies": {
+    "@types/cors": "2.8.19",
+    "@types/express": "5.0.6",
+    "@types/supertest": "7.2.1",
+    "pino-pretty": "13.0.0",
+    "supertest": "7.3.1",
+    "vitest": "5.0.5"
   }
 }
