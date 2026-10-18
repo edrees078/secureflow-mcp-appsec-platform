@@ -1,0 +1,12 @@
+// SecureFlow — Database Schema (Prisma ORM 7)
+// NOTE: In Prisma ORM 7, datasource URL is defined in prisma.config.ts, NOT in this schema file.
+// Business entity models (User, Finding, Project, Scan, AuditLog) are deferred to Phase 3.
+
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}

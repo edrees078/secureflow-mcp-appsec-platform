@@ -17,10 +17,18 @@
   },
   "dependencies": {
     "@secureflow/schemas": "workspace:*",
-    "@secureflow/shared": "workspace:*"
+    "@secureflow/shared": "workspace:*",
+    "pg": "^8.23.1"
   },
   "scripts": {
     "build": "tsc -b",
+    "db:smoke": "tsx src/db/smoke-check.ts",
+    "prisma:validate": "prisma validate",
     "typecheck": "tsc -b"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "dotenv": "16.4.7",
+    "prisma": "7.10.1"
   }
 }

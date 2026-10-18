@@ -1,0 +1,56 @@
+# ==============================================================================
+# SecureFlow — Local Development Docker Compose Configuration
+# ==============================================================================
+# This configuration orchestrates the PostgreSQL database for local development.
+#
+# IMPORTANT SAFETY & SECURITY POLICIES:
+# 1. Credentials:
+#    - Credentials MUST be loaded from '.env' (copied from '.env.example').
+#    - Silent fallback values are disabled (using ':?error' syntax).
+#    - The actual '.env' file is ignored by Git and must never be committed.
+#
+# 2. Network Isolation:
+#    - PostgreSQL is bound EXCLUSIVELY to '127.0.0.1' on the host interface.
+#    - It is NOT accessible from public or external network interfaces.
+#
+# 3. Data Durability & Prohibited Commands:
+#    - PostgreSQL data is persisted in the named volume 'postgres_data'.
+#    - DESTRUCTIVE COMMAND PROHIBITION: NEVER run 'docker compose down -v'
+#      without explicit user authorization. The '-v' flag deletes all volumes,
+#      erasing all local databases, tables, and test data.
+#    - To safely stop containers, run 'docker compose down' (without '-v')
+#      or 'pnpm run db:down'.
+# ==============================================================================
+
+name: secureflow
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: secureflow-postgres
+    restart: unless-stopped
+    ports:
+      # Bind exclusively to 127.0.0.1 (loopback) on port 5433 to isolate from native PostgreSQL 15
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    environment:
+      # Required environment variables from .env — fails startup if missing
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set in .env}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      # Named persistent volume
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # Authenticated PostgreSQL readiness probe
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  # Persistent volume for PostgreSQL database storage
+  # PROHIBITION: Do NOT execute 'docker compose down -v' — it will destroy this volume!
+  postgres_data:
+    driver: local
