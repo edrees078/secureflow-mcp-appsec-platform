@@ -20,7 +20,7 @@
     "dev:api": "pnpm --filter @secureflow/api dev",
     "lint": "eslint .",
     "prisma:validate": "pnpm --filter @secureflow/domain exec prisma validate",
-    "test": "node tests/boundaries/verify-boundaries.mjs",
+    "test": "pnpm run test:boundaries && pnpm run test:api",
     "test:api": "pnpm --filter @secureflow/api test",
     "test:boundaries": "node tests/boundaries/verify-boundaries.mjs",
     "typecheck": "tsc -b"
