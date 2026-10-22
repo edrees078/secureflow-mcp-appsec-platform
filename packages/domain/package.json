@@ -23,6 +23,8 @@
   "scripts": {
     "build": "tsc -b",
     "db:smoke": "tsx src/db/smoke-check.ts",
+    "db:test:integrity": "tsx tests/integration/db-integrity.test.ts",
+    "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
     "typecheck": "tsc -b"
   },

@@ -212,6 +212,7 @@ The core entity — a recorded security vulnerability.
 | `assigned_to_id` | UUID | FK → users(id), nullable | Developer assigned; null if unassigned |
 | `due_date` | DATE | nullable | Remediation due date |
 | `is_deleted` | BOOLEAN | NOT NULL, default `false` | Soft deletion; records retained for audit |
+| `version` | INTEGER | NOT NULL, default `1` | Optimistic concurrency control version counter; incremented on finding mutations |
 | `created_at` | TIMESTAMPTZ | NOT NULL | |
 | `updated_at` | TIMESTAMPTZ | NOT NULL | |
 
@@ -393,7 +394,7 @@ stateDiagram-v2
 | MCP action approval/execution | Two-phase: approve → re-authorize → execute | SERIALIZABLE for the execute step | Re-check authorization at execution time, not just at proposal time |
 
 ### Optimistic Locking Strategy
-Findings will carry an `updated_at` timestamp. Concurrent updates are detected by checking `WHERE id = ? AND updated_at = ?` before committing — if 0 rows affected, return HTTP 409 Conflict. Implement in Phase 3.
+Findings carry a dedicated integer `version` field (initialized to 1). Concurrent updates are detected by checking `WHERE id = ? AND version = ?` with an atomic compare-and-increment (`SET version = version + 1`) before committing — if 0 rows affected, return HTTP 409 Conflict. The `updated_at` timestamp is maintained concurrently for temporal and audit purposes, but optimistic concurrency protection relies strictly on the atomic version counter. Implement in Phase 3.
 
 ---
 

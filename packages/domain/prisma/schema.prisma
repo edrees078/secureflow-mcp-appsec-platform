@@ -189,7 +189,7 @@ model Finding {
   // Relations
   project          Project           @relation(fields: [projectId], references: [id])
   createdBy        User              @relation("FindingCreatedBy", fields: [createdById], references: [id])
-  assignedTo       User?             @relation("FindingAssignedTo", fields: [assignedToId], references: [id])
+  assignedTo       User?             @relation("FindingAssignedTo", fields: [assignedToId], references: [id], onDelete: Restrict)
   remediationTasks RemediationTask[]
   findingEvents    FindingEvent[]
 
@@ -259,7 +259,7 @@ model AuditEvent {
   createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // Relations
-  actor User? @relation("AuditEventActor", fields: [actorId], references: [id])
+  actor User? @relation("AuditEventActor", fields: [actorId], references: [id], onDelete: Restrict)
 
   @@index([actorId])
   @@index([eventCategory, eventType])

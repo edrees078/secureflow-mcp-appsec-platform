@@ -297,15 +297,17 @@ All standard development tasks are orchestrated through root `package.json` scri
 
 | Command | Action | Description |
 |---|---|---|
-| `pnpm run build` | TypeScript Compile | Compiles all packages and applications via `tsc -b`. |
+| `pnpm run build` | Monorepo Build | Generates Prisma 7 Client and compiles all packages via `tsc -b`. |
 | `pnpm run typecheck` | Type Checking | Verifies static typing across all packages without emitting output. |
 | `pnpm run lint` | ESLint Verification | Runs ESLint 9 across the monorepo, verifying code style and boundary rules. |
-| `pnpm test` | Complete Test Suite | Executes all architectural boundary tests and API integration tests. |
+| `pnpm test` | Unit & API Tests | Executes all architectural boundary tests and Express API unit/integration tests. |
 | `pnpm run test:boundaries` | Boundary Tests | Runs the 12 positive and negative architectural boundary enforcement tests. |
-| `pnpm run test:api` | API Integration Tests | Runs all 17 Express API tests using Vitest (security, logging, health, errors). |
+| `pnpm run test:api` | API Tests | Runs all 17 Express API tests using Vitest (security, logging, health, errors). |
+| `pnpm run prisma:generate` | Prisma Client Generation | Generates the Prisma 7 Client into `packages/domain/src/generated/prisma`. |
 | `pnpm run prisma:validate` | Schema Validation | Validates `schema.prisma` offline using Prisma 7 CLI. |
-| `pnpm run db:validate` | Compose Validation | Validates Docker Compose configuration against `.env` requirements. |
 | `pnpm run db:smoke` | DB Smoke Test | Verifies authenticated connection to PostgreSQL 17 on port 5433. |
+| `pnpm run db:test:integrity` | DB Integrity Tests | Executes isolated database constraint and integrity tests against `secureflow_test`. |
+| `pnpm run db:validate` | Compose Validation | Validates Docker Compose configuration against `.env` requirements. |
 
 ---
 

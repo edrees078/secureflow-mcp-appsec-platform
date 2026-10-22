@@ -18,6 +18,8 @@ jobs:
     name: Build, Lint & Test
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      DATABASE_URL: postgresql://ci_dummy_user:ci_dummy_pass@127.0.0.1:5432/ci_dummy_db?schema=public
 
     steps:
       - name: Checkout repository
@@ -42,8 +44,11 @@ jobs:
       - name: Validate Docker Compose Configuration
         run: pnpm run db:validate
 
+      - name: Generate Prisma ORM 7 Client
+        run: pnpm run prisma:generate
+
       - name: Compile TypeScript Project References
-        run: pnpm run build
+        run: pnpm exec tsc -b
 
       - name: Strict TypeScript Typecheck
         run: pnpm run typecheck
@@ -56,8 +61,6 @@ jobs:
 
       - name: Validate Prisma ORM 7 Schema
         run: pnpm run prisma:validate
-        env:
-          DATABASE_URL: postgresql://ci_dummy_user:ci_dummy_pass@127.0.0.1:5432/ci_dummy_db?schema=public
 
       - name: Run Express API Integration Tests
         run: pnpm run test:api

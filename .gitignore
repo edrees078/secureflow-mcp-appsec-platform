@@ -24,6 +24,7 @@ out/
 .turbo/
 .cache/
 *.tsbuildinfo
+packages/domain/src/generated/
 
 
 # Testing & Coverage
