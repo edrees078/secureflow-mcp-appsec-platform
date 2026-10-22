@@ -12,7 +12,8 @@
     }
   },
   "dependencies": {
-    "@secureflow/shared": "workspace:*"
+    "@secureflow/shared": "workspace:*",
+    "zod": "4.6.7"
   },
   "scripts": {
     "build": "tsc -b",

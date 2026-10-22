@@ -26,11 +26,14 @@
     "db:test:integrity": "tsx tests/integration/db-integrity.test.ts",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
     "typecheck": "tsc -b"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",
     "dotenv": "16.4.7",
-    "prisma": "7.10.1"
+    "prisma": "7.10.1",
+    "vitest": "5.0.5"
   }
 }

@@ -62,5 +62,8 @@ jobs:
       - name: Validate Prisma ORM 7 Schema
         run: pnpm run prisma:validate
 
+      - name: Run Domain Unit Tests
+        run: pnpm run test:unit
+
       - name: Run Express API Integration Tests
         run: pnpm run test:api

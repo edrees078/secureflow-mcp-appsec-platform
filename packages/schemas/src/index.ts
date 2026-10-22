@@ -1,12 +1,22 @@
 import { isNonEmptyString } from '@secureflow/shared';
+import type { FindingSeverity, FindingStatus } from './enums.js';
+
+// Canonical Enums and Schemas
+export * from './enums.js';
+
+// Common Schemas
+export * from './dtos/common.js';
+
+// Service Input DTOs
+export * from './dtos/project.dto.js';
+export * from './dtos/finding.dto.js';
+export * from './dtos/task.dto.js';
+export * from './dtos/audit.dto.js';
 
 /**
- * Finding Severity Enumeration & Types
+ * Shared Finding View Record.
+ * Usable by web frontend and MCP presentation layers without domain dependency.
  */
-export type FindingSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
-
-export type FindingStatus = 'OPEN' | 'IN_TRIAGE' | 'CONFIRMED' | 'REMEDIATED' | 'ACCEPTED_RISK' | 'FALSE_POSITIVE';
-
 export interface FindingRecord {
   id: string;
   projectId: string;
@@ -17,5 +27,5 @@ export interface FindingRecord {
 }
 
 export function isValidFindingTitle(title: unknown): title is string {
-  return isNonEmptyString(title) && title.length <= 255;
+  return isNonEmptyString(title) && title.length <= 500;
 }
