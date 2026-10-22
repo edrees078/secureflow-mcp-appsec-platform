@@ -1,6 +1,5 @@
 // SecureFlow — Database Schema (Prisma ORM 7)
 // NOTE: In Prisma ORM 7, datasource URL is defined in prisma.config.ts, NOT in this schema file.
-// Business entity models (User, Finding, Project, Scan, AuditLog) are deferred to Phase 3.
 
 datasource db {
   provider = "postgresql"
@@ -9,4 +8,262 @@ datasource db {
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
+}
+
+// ============================================================================
+// Enums
+// ============================================================================
+
+enum GlobalRole {
+  ADMIN
+  ANALYST
+  DEVELOPER
+
+  @@map("global_role")
+}
+
+enum ProjectRole {
+  ANALYST
+  DEVELOPER
+
+  @@map("project_role")
+}
+
+enum FindingSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+
+  @@map("finding_severity")
+}
+
+enum FindingCategory {
+  INJECTION
+  AUTH
+  ACCESS_CONTROL
+  CRYPTO
+  XSS
+  SSRF
+  IDOR
+  INSECURE_DESERIALIZATION
+  SUPPLY_CHAIN
+  CONFIG_EXPOSURE
+  SENSITIVE_DATA
+  LOGGING
+  OTHER
+
+  @@map("finding_category")
+}
+
+enum FindingStatus {
+  OPEN
+  TRIAGED
+  IN_PROGRESS
+  READY_FOR_REVIEW
+  VERIFIED
+  CLOSED
+  REOPENED
+
+  @@map("finding_status")
+}
+
+enum RemediationTaskStatus {
+  PENDING
+  IN_PROGRESS
+  SUBMITTED
+  VERIFIED
+  REJECTED
+
+  @@map("remediation_task_status")
+}
+
+enum FindingEventType {
+  CREATED
+  STATUS_CHANGED
+  ASSIGNED
+  UNASSIGNED
+  UPDATED
+  DELETED
+  REOPENED
+
+  @@map("finding_event_type")
+}
+
+enum AuditEventCategory {
+  AUTH
+  FINDING
+  PROJECT
+  MEMBER
+  TASK
+  MCP
+
+  @@map("audit_event_category")
+}
+
+// ============================================================================
+// Models
+// ============================================================================
+
+model User {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sub         String     @unique @db.VarChar(255)
+  email       String     @unique @db.VarChar(320)
+  displayName String     @map("display_name") @db.VarChar(255)
+  globalRole  GlobalRole @map("global_role")
+  isActive    Boolean    @default(true) @map("is_active")
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  createdProjects    Project[]         @relation("ProjectCreatedBy")
+  projectMemberships ProjectMember[]   @relation("ProjectMemberUser")
+  addedMemberships   ProjectMember[]   @relation("ProjectMemberAddedBy")
+  createdFindings    Finding[]         @relation("FindingCreatedBy")
+  assignedFindings   Finding[]         @relation("FindingAssignedTo")
+  assignedTasks      RemediationTask[] @relation("TaskAssignedTo")
+  createdTasks       RemediationTask[] @relation("TaskAssignedBy")
+  findingEvents      FindingEvent[]    @relation("FindingEventActor")
+  auditEvents        AuditEvent[]      @relation("AuditEventActor")
+
+  @@map("users")
+}
+
+model Project {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @db.VarChar(255)
+  slug        String   @unique @db.VarChar(100)
+  description String?  @db.Text
+  isActive    Boolean  @default(true) @map("is_active")
+  createdById String   @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  createdBy User            @relation("ProjectCreatedBy", fields: [createdById], references: [id])
+  members   ProjectMember[]
+  findings  Finding[]
+
+  @@index([createdById])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId String      @map("project_id") @db.Uuid
+  userId    String      @map("user_id") @db.Uuid
+  role      ProjectRole
+  addedById String      @map("added_by_id") @db.Uuid
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  project Project @relation(fields: [projectId], references: [id])
+  user    User    @relation("ProjectMemberUser", fields: [userId], references: [id])
+  addedBy User    @relation("ProjectMemberAddedBy", fields: [addedById], references: [id])
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@index([addedById])
+  @@map("project_members")
+}
+
+model Finding {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId    String          @map("project_id") @db.Uuid
+  title        String          @db.VarChar(500)
+  description  String          @db.Text
+  severity     FindingSeverity
+  category     FindingCategory
+  cvssScore    Decimal?        @map("cvss_score") @db.Decimal(3, 1)
+  status       FindingStatus   @default(OPEN)
+  createdById  String          @map("created_by_id") @db.Uuid
+  assignedToId String?         @map("assigned_to_id") @db.Uuid
+  dueDate      DateTime?       @map("due_date") @db.Date
+  isDeleted    Boolean         @default(false) @map("is_deleted")
+  version      Int             @default(1) @map("version")
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  project          Project           @relation(fields: [projectId], references: [id])
+  createdBy        User              @relation("FindingCreatedBy", fields: [createdById], references: [id])
+  assignedTo       User?             @relation("FindingAssignedTo", fields: [assignedToId], references: [id])
+  remediationTasks RemediationTask[]
+  findingEvents    FindingEvent[]
+
+  @@index([projectId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([projectId, status])
+  @@index([isDeleted])
+  @@index([createdById])
+  @@map("findings")
+}
+
+model RemediationTask {
+  id           String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  findingId    String                @map("finding_id") @db.Uuid
+  assignedToId String                @map("assigned_to_id") @db.Uuid
+  assignedById String                @map("assigned_by_id") @db.Uuid
+  description  String                @db.Text
+  notes        String?               @db.Text
+  status       RemediationTaskStatus @default(PENDING)
+  dueDate      DateTime?             @map("due_date") @db.Date
+  createdAt    DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  finding    Finding @relation(fields: [findingId], references: [id])
+  assignedTo User    @relation("TaskAssignedTo", fields: [assignedToId], references: [id])
+  assignedBy User    @relation("TaskAssignedBy", fields: [assignedById], references: [id])
+
+  @@index([findingId])
+  @@index([assignedToId])
+  @@index([assignedById])
+  @@map("remediation_tasks")
+}
+
+model FindingEvent {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  findingId      String           @map("finding_id") @db.Uuid
+  actorId        String           @map("actor_id") @db.Uuid
+  eventType      FindingEventType @map("event_type")
+  previousStatus String?          @map("previous_status") @db.VarChar(50)
+  newStatus      String?          @map("new_status") @db.VarChar(50)
+  metadata       Json?            @db.JsonB
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  finding Finding @relation(fields: [findingId], references: [id])
+  actor   User    @relation("FindingEventActor", fields: [actorId], references: [id])
+
+  @@index([findingId])
+  @@index([actorId])
+  @@index([createdAt(sort: Desc)])
+  @@map("finding_events")
+}
+
+model AuditEvent {
+  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId       String?            @map("actor_id") @db.Uuid
+  eventCategory AuditEventCategory @map("event_category")
+  eventType     String             @map("event_type") @db.VarChar(100)
+  resourceId    String?            @map("resource_id") @db.Uuid
+  resourceType  String?            @map("resource_type") @db.VarChar(100)
+  beforeState   Json?              @map("before_state") @db.JsonB
+  afterState    Json?              @map("after_state") @db.JsonB
+  ipAddress     String?            @map("ip_address") @db.Inet
+  userAgent     String?            @map("user_agent") @db.VarChar(500)
+  createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  actor User? @relation("AuditEventActor", fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([eventCategory, eventType])
+  @@index([resourceId, resourceType])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_events")
 }
