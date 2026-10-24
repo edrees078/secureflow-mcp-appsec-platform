@@ -16,6 +16,8 @@
     }
   },
   "dependencies": {
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
     "@secureflow/schemas": "workspace:*",
     "@secureflow/shared": "workspace:*",
     "pg": "^8.23.1"
@@ -24,6 +26,7 @@
     "build": "tsc -b",
     "db:smoke": "tsx src/db/smoke-check.ts",
     "db:test:integrity": "tsx tests/integration/db-integrity.test.ts",
+    "db:test:repositories": "tsx tests/integration/gate3b-repositories.integration.ts",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
     "test:unit": "vitest run",

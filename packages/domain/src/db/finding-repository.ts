@@ -1,7 +1,10 @@
 import type { FindingRecord } from '@secureflow/schemas';
 
 /**
- * Internal Database Repository for Findings.
+ * @deprecated Legacy in-memory stub for FindingRepository created during Phase 2.
+ * Preserved strictly for architectural boundary test fixtures (api-imports-db, mcp-imports-db)
+ * and the placeholder FindingService until Gate 3D domain service migration.
+ * Production repositories for Gate 3B+ are located in packages/domain/src/db/repositories/.
  * MUST NOT be imported directly by apps/api or apps/mcp-server.
  */
 export class FindingRepository {
