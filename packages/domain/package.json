@@ -27,6 +27,7 @@
     "db:smoke": "tsx src/db/smoke-check.ts",
     "db:test:integrity": "tsx tests/integration/db-integrity.test.ts",
     "db:test:repositories": "tsx tests/integration/gate3b-repositories.integration.ts",
+    "db:test:authorization": "tsx tests/integration/gate3c-authorization.integration.ts",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
     "test:unit": "vitest run",

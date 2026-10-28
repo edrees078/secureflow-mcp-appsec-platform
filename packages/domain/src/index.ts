@@ -2,16 +2,37 @@
  * SecureFlow Domain Layer Entry Point.
  *
  * Public surface of @secureflow/domain exposing approved business services,
- * read-only domain entity types, and typed repository interfaces for dependency injection.
+ * object-level authorization policies, read-only domain entity types,
+ * and typed repository interfaces for dependency injection.
  *
  * Security Boundary:
  * - DatabaseManager, PrismaClient, driver adapters, and concrete repositories remain strictly internal.
  * - Raw repository factories (createRepositories) are not exposed publicly.
  * - Internal privileged query scopes (ProjectQueryScope, FindingQueryScope) are protected and not exported.
+ * - Authorization policies provide declarative object-level security enforcement (Gate 3C).
  */
 
 // Business Services (Gate 3D will expand these)
 export { FindingService, type CreateFindingDto } from './services/index.js';
+
+// Object-Level Authorization Policies & Actor Context (Gate 3C)
+export {
+  ActorContext,
+  createSyntheticActorContext,
+  type ActorContextParams,
+  type ProjectMembership,
+  ProjectPolicy,
+  FindingPolicy,
+  TaskPolicy,
+  AuditPolicy,
+  type AuthzDecision,
+  type ProjectAction,
+  type FindingAction,
+  type TaskAction,
+  type AuditAction,
+  type FindingAuthzContext,
+  type TaskAuthzContext,
+} from './policy/index.js';
 
 // Domain Entities (Read-only projections)
 export type {
