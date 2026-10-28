@@ -86,10 +86,11 @@ export interface ListProjectsFilterInput {
 
 /**
  * Controlled dependency-injection interface for domain services.
- * Injects repository interfaces without exposing Prisma clients or concrete classes.
+ * Injects repository interfaces or managed database instance without exposing Prisma clients or concrete classes.
  */
 export interface ServiceDependencies {
-  readonly repositories: RepositoryContainer;
+  readonly repositories?: RepositoryContainer;
+  readonly db?: import('../db/database-manager.js').DatabaseManager;
 }
 
 // ============================================================================

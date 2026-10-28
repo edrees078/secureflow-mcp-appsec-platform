@@ -4,6 +4,7 @@ import type {
   FindingEventType,
   FindingSeverity,
   FindingStatus,
+  GlobalRole,
   ProjectRole,
   RemediationTaskStatus,
 } from '@secureflow/schemas';
@@ -13,13 +14,22 @@ import type { Prisma } from '../../generated/prisma/client.js';
  * Common database client abstraction matching both PrismaClient and Prisma TransactionClient.
  */
 export type PrismaDbClient = {
+  user: Prisma.UserDelegate;
   project: Prisma.ProjectDelegate;
   projectMember: Prisma.ProjectMemberDelegate;
   finding: Prisma.FindingDelegate;
   findingEvent: Prisma.FindingEventDelegate;
   remediationTask: Prisma.RemediationTaskDelegate;
   auditEvent: Prisma.AuditEventDelegate;
+  $queryRaw: <T = unknown>(query: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => Promise<T>;
+  $executeRaw: (query: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => Promise<number>;
 };
+
+export interface UserAuthEntity {
+  id: string;
+  isActive: boolean;
+  globalRole: GlobalRole;
+}
 
 // ============================================================================
 // Domain Entities (Read-only projections)
@@ -138,9 +148,9 @@ export interface ProjectQueryScope {
 
 export interface ProjectFilter {
   scope: ProjectQueryScope;
-  search?: string;
-  page?: number;
-  limit?: number;
+  search?: string | undefined;
+  page?: number | undefined;
+  limit?: number | undefined;
 }
 
 /**
@@ -153,46 +163,46 @@ export interface FindingQueryScope {
    * Projects the authenticated caller has access to.
    * If empty or undefined and unrestricted is false, query returns zero results.
    */
-  accessibleProjectIds?: string[];
+  accessibleProjectIds?: string[] | undefined;
   /**
    * Filter findings assigned to this specific user (e.g. for Developer persona).
    * Must be constrained to accessible projects when evaluated.
    */
-  assignedToUserId?: string;
+  assignedToUserId?: string | undefined;
   /**
    * If true, enables unconstrained finding queries (organization-wide Admin access).
    * Must be set strictly by authoritative domain policies, never from untrusted client input.
    */
-  unrestricted?: boolean;
+  unrestricted?: boolean | undefined;
   /**
    * Invariant OLI-12: Soft-deleted findings are excluded from all queries unless the caller
    * is an Admin with explicit permission to view deleted records. Defaults to false.
    */
-  includeDeleted?: boolean;
+  includeDeleted?: boolean | undefined;
 }
 
 export interface FindingFilter {
   scope: FindingQueryScope;
-  projectId?: string;
-  status?: FindingStatus;
-  severity?: FindingSeverity;
-  category?: FindingCategory;
-  assignedToId?: string;
-  search?: string;
-  page?: number;
-  limit?: number;
+  projectId?: string | undefined;
+  status?: FindingStatus | undefined;
+  severity?: FindingSeverity | undefined;
+  category?: FindingCategory | undefined;
+  assignedToId?: string | undefined;
+  search?: string | undefined;
+  page?: number | undefined;
+  limit?: number | undefined;
 }
 
 export interface AuditEventFilter {
-  eventCategory?: AuditEventCategory;
-  eventType?: string;
-  resourceId?: string;
-  resourceType?: string;
-  actorId?: string;
-  fromTimestamp?: Date;
-  toTimestamp?: Date;
-  page?: number;
-  limit?: number;
+  eventCategory?: AuditEventCategory | undefined;
+  eventType?: string | undefined;
+  resourceId?: string | undefined;
+  resourceType?: string | undefined;
+  actorId?: string | undefined;
+  fromTimestamp?: Date | undefined;
+  toTimestamp?: Date | undefined;
+  page?: number | undefined;
+  limit?: number | undefined;
 }
 
 // ============================================================================
@@ -202,14 +212,14 @@ export interface AuditEventFilter {
 export interface CreateProjectRepoData {
   name: string;
   slug: string;
-  description?: string | null;
+  description?: string | null | undefined;
   createdById: string;
 }
 
 export interface UpdateProjectRepoData {
-  name?: string;
-  description?: string | null;
-  isActive?: boolean;
+  name?: string | undefined;
+  description?: string | null | undefined;
+  isActive?: boolean | undefined;
 }
 
 export interface AddProjectMemberRepoData {
@@ -286,6 +296,31 @@ export interface IProjectRepository {
   removeMember(projectId: string, userId: string): Promise<boolean>;
   getMembers(projectId: string): Promise<ProjectMemberEntity[]>;
   isMember(projectId: string, userId: string): Promise<boolean>;
+
+  // --- Sub-Gate 3D.2 Lock Enhancements ---
+  lockProject(id: string, mode?: 'SHARE' | 'UPDATE'): Promise<ProjectEntity | null>;
+  lockMember(projectId: string, userId: string, mode?: 'SHARE' | 'UPDATE'): Promise<ProjectMemberEntity | null>;
+  lockMembers(projectId: string, userIds: string[], mode?: 'SHARE' | 'UPDATE'): Promise<ProjectMemberEntity[]>;
+  getMemberRole(projectId: string, userId: string): Promise<ProjectRole | null>;
+}
+
+export interface AuthoritativeUserEntity {
+  id: string;
+  isActive: boolean;
+  globalRole: GlobalRole;
+  memberships: Array<{
+    projectId: string;
+    role: ProjectRole;
+  }>;
+}
+
+export interface IUserRepository {
+  findById(id: string): Promise<UserAuthEntity | null>;
+  findAuthoritativeUser(id: string): Promise<AuthoritativeUserEntity | null>;
+  lockUser(id: string, mode?: 'SHARE' | 'UPDATE'): Promise<UserAuthEntity | null>;
+  lockUsers(userIds: string[], mode?: 'SHARE' | 'UPDATE'): Promise<Map<string, UserAuthEntity>>;
+  deactivateUser(id: string): Promise<UserAuthEntity>;
+  updateGlobalRole(id: string, role: GlobalRole): Promise<UserAuthEntity>;
 }
 
 export interface IFindingRepository {
@@ -334,4 +369,5 @@ export interface RepositoryContainer {
   findingRepo: IFindingRepository;
   taskRepo: ITaskRepository;
   auditRepo: IAuditRepository;
+  userRepo: IUserRepository;
 }

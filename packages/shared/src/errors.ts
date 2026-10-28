@@ -84,3 +84,12 @@ export class ConcurrencyConflictError extends SecureFlowError {
     this.expectedVersion = expectedVersion;
   }
 }
+
+/**
+ * Thrown when a business conflict or resource collision occurs (HTTP 409).
+ */
+export class ConflictError extends SecureFlowError {
+  constructor(message = 'Resource conflict', code = 'CONFLICT', details?: unknown) {
+    super(message, code, 409, details);
+  }
+}

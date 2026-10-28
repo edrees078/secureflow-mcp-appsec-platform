@@ -10,6 +10,7 @@ export {
   DomainValidationError,
   InvalidStateTransitionError,
   ConcurrencyConflictError,
+  ConflictError,
 } from './errors.js';
 
 export function formatDateIso(date: Date): string {

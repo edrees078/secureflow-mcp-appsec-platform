@@ -85,3 +85,29 @@ export function createTestDeveloperActor(
     ...overrides,
   });
 }
+
+// ============================================================================
+// Controlled Test Dependency Injection Helpers
+// ============================================================================
+
+import { ProjectService } from '../services/project-service.js';
+import { AuditService } from '../services/audit-service.js';
+import type { RepositoryContainer } from '../db/repositories/types.js';
+
+export type { RepositoryContainer };
+
+/**
+ * Creates a test ProjectService instance with injected mock or in-memory repositories.
+ * Strictly forbidden from being used in production application code.
+ */
+export function createTestProjectService(repositories: RepositoryContainer): ProjectService {
+  return new ProjectService({ repositories });
+}
+
+/**
+ * Creates a test AuditService instance with injected mock or in-memory repositories.
+ * Strictly forbidden from being used in production application code.
+ */
+export function createTestAuditService(repositories: RepositoryContainer): AuditService {
+  return new AuditService({ repositories });
+}

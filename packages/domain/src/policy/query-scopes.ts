@@ -9,12 +9,12 @@ export interface ScopeDerivationOptions {
    * Whether to include inactive (archived) projects.
    * Only honored for global Admin callers.
    */
-  readonly includeInactiveProjects?: boolean;
+  readonly includeInactiveProjects?: boolean | undefined;
   /**
    * Whether to include soft-deleted findings (OLI-12).
    * Strictly honored for global Admin callers only.
    */
-  readonly includeDeletedFindings?: boolean;
+  readonly includeDeletedFindings?: boolean | undefined;
 }
 
 /**

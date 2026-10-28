@@ -12,18 +12,27 @@
  * - Authorization policies provide declarative object-level security enforcement (Gate 3C).
  */
 
-// Business Services & Service Contracts (Gate 3D)
-export { FindingService } from './services/index.js';
+// Business Services & Trusted Composition Root (Gate 3D)
+export {
+  FindingService,
+  ProjectService,
+  AuditService,
+  createDomainServices,
+  generateProjectSlug,
+} from './services/index.js';
 export type {
   IProjectService,
   IFindingService,
   ITaskService,
   IAuditService,
+  DomainServices,
+  DomainServicesConfig,
+  ProjectServiceInit,
+  AuditServiceInit,
   ListFindingsFilterInput,
   ListProjectsFilterInput,
   ForceCloseFindingInput,
   ForceReopenFindingInput,
-  ServiceDependencies,
 } from './services/index.js';
 
 // Object-Level Authorization Policies & Actor Context (Gate 3C)
@@ -52,16 +61,18 @@ export type {
   FindingEventEntity,
   RemediationTaskEntity,
   AuditEventEntity,
+  AuthoritativeUserEntity,
   PaginatedResult,
 } from './db/repositories/types.js';
 
-// Repository Interfaces (for Dependency Injection and testing)
+// Repository Interfaces (Read-only contracts)
 export type {
   IProjectRepository,
   IFindingRepository,
   ITaskRepository,
   IAuditRepository,
-  RepositoryContainer,
+  IUserRepository,
+  UserAuthEntity,
 } from './db/repositories/types.js';
 
 // Typed Mutation Input Data Contracts (Strict DTOs - no raw Prisma input types)
@@ -75,12 +86,3 @@ export type {
   CreateTaskRepoData,
   CreateAuditEventRepoData,
 } from './db/repositories/types.js';
-
-/**
- * Controlled Service Initialization Contract for Dependency Injection (Gate 3D).
- * Preserves a clean pathway for injecting repository containers and mock dependencies
- * into future domain services without exposing concrete database drivers or clients.
- */
-export interface DomainServiceDependencies {
-  readonly repositories: import('./db/repositories/types.js').RepositoryContainer;
-}
