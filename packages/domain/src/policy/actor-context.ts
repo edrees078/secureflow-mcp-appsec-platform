@@ -20,18 +20,22 @@ export interface ActorContextParams {
  * Internal Domain Authorization Actor Context.
  *
  * Security Boundary & Trust Model:
- * 1. NOT AUTHENTICATION PROOF:
- *    Possession of an ActorContext instance is an internal authorization context, NOT authentication proof.
- *    It must never be constructed directly from untrusted client transport input (HTTP request bodies,
- *    query parameters, or client-controlled headers like x-user-id or x-role).
+ * 1. AUTHORIZATION CONTAINER, NOT AUTHENTICATION EVIDENCE:
+ *    `ActorContext` is an internal authorization-data container carrying verified identity and permissions,
+ *    NOT cryptographic authentication evidence.
+ *    A PostgreSQL `project_members` row-lock check establishes current membership for a user ID, but does
+ *    NOT authenticate the caller controlling that identity. Membership locks alone cannot reject forged
+ *    actor identities.
  *
- * 2. PRODUCTION CONSTRUCTION STRATEGY (Phase 4):
- *    In production runtime, ActorContext must ONLY be constructed by authenticated server-side middleware:
- *    - Step A: Verify OIDC / Keycloak Bearer JWT (RS256 signature, expiry, audience, issuer).
- *    - Step B: Authoritative Database User Check: Look up user in PostgreSQL `users` table via `sub` to
- *      retrieve authoritative `globalRole` and `isActive` status. Never trust client-asserted roles.
- *    - Step C: Authoritative Database Membership Check: Query PostgreSQL `project_members` table to
- *      derive current active memberships. Client-supplied project IDs must NEVER grant membership.
+ * 2. DISTINCT DEFENSE-IN-DEPTH RESPONSIBILITIES:
+ *    - Phase 4: Cryptographically verifies caller identity using Keycloak OIDC (RS256 Bearer JWTs: sub, iss, aud, exp).
+ *    - Authoritative PostgreSQL Lookups: Authoritatively establish current account status (is_active), global role
+ *      (global_role), and project memberships from the database. Client-asserted roles or memberships are rejected.
+ *    - Gate 3D: Transactional checks revalidate authorization-sensitive attributes (e.g. SELECT ... FOR SHARE on
+ *      project_members or checking users.is_active = true) under lock to eliminate TOCTOU authorization races.
+ *    - Transport Handlers: Production transport handlers (Express API routes, MCP tools) must never accept
+ *      caller-supplied ActorContext instances, arbitrary role claims, or identity overrides.
+ *    - Synthetic Actors: Restricted strictly to testing via `@secureflow/domain/testing`.
  *
  * 3. AUTHORIZATION FRESHNESS CONTRACT & GATE 3D CONCURRENT-REVOCATION REQUIREMENTS:
  *    - ActorContext is an immutable point-in-time value snapshot.
@@ -52,9 +56,9 @@ export interface ActorContextParams {
  *    - Deadlock or serialization failures must be handled safely without bypassing authorization or
  *      allowing stale writes.
  *
- * 4. SYNTHETIC ACTOR CONSTRUCTION:
+ * 4. SYNTHETIC ACTOR CONSTRUCTION (TESTING ONLY):
  *    The ActorContext constructor and createSyntheticActorContext are provided for deterministic
- *    unit and integration testing with synthetic personas.
+ *    unit and integration testing with synthetic personas under `@secureflow/domain/testing`.
  */
 export class ActorContext {
   public readonly id: string;

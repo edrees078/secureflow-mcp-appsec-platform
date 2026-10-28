@@ -1,6 +1,5 @@
 export {
   ActorContext,
-  createSyntheticActorContext,
   type ActorContextParams,
   type ProjectMembership,
 } from './actor-context.js';

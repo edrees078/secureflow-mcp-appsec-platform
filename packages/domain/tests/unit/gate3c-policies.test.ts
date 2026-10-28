@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   ActorContext,
-  createSyntheticActorContext,
   ProjectPolicy,
   FindingPolicy,
   TaskPolicy,
@@ -9,6 +8,7 @@ import {
   deriveProjectQueryScope,
   deriveFindingQueryScope,
 } from '../../src/policy/index.js';
+import { createSyntheticActorContext } from '../../src/testing/index.js';
 import {
   EntityNotFoundError,
   ForbiddenError,

@@ -48,7 +48,28 @@ async function main() {
       expectViolation: false,
     },
 
+    {
+      name: '[POSITIVE] packages/domain testing helper entry point is self-contained',
+      filePath: path.join(projectRoot, 'packages/domain/src/testing/index.ts'),
+      code: fs.readFileSync(path.join(projectRoot, 'packages/domain/src/testing/index.ts'), 'utf-8'),
+      expectViolation: false,
+    },
+
     // --- NEGATIVE TESTS (Intentional Violations from Fixtures) ---
+    {
+      name: '[NEGATIVE] apps/api attempts to import domain testing helpers (@secureflow/domain/testing)',
+      fixtureFile: 'api-imports-testing.ts',
+      simulatedLocation: path.join(projectRoot, 'apps/api/src/fixture-api-testing.ts'),
+      expectViolation: true,
+      expectedRule: 'boundaries/dependencies',
+    },
+    {
+      name: '[NEGATIVE] apps/mcp-server attempts to import domain testing helpers (@secureflow/domain/testing)',
+      fixtureFile: 'mcp-imports-testing.ts',
+      simulatedLocation: path.join(projectRoot, 'apps/mcp-server/src/fixture-mcp-testing.ts'),
+      expectViolation: true,
+      expectedRule: 'boundaries/dependencies',
+    },
     {
       name: '[NEGATIVE] apps/web imports server-only @secureflow/domain',
       fixtureFile: 'web-imports-domain.ts',

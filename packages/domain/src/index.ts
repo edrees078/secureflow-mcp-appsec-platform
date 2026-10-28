@@ -12,13 +12,23 @@
  * - Authorization policies provide declarative object-level security enforcement (Gate 3C).
  */
 
-// Business Services (Gate 3D will expand these)
-export { FindingService, type CreateFindingDto } from './services/index.js';
+// Business Services & Service Contracts (Gate 3D)
+export { FindingService } from './services/index.js';
+export type {
+  IProjectService,
+  IFindingService,
+  ITaskService,
+  IAuditService,
+  ListFindingsFilterInput,
+  ListProjectsFilterInput,
+  ForceCloseFindingInput,
+  ForceReopenFindingInput,
+  ServiceDependencies,
+} from './services/index.js';
 
 // Object-Level Authorization Policies & Actor Context (Gate 3C)
 export {
   ActorContext,
-  createSyntheticActorContext,
   type ActorContextParams,
   type ProjectMembership,
   ProjectPolicy,

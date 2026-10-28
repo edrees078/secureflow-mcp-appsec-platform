@@ -85,7 +85,7 @@ export const VerifyFindingInputSchema = z
 export type VerifyFindingInput = z.infer<typeof VerifyFindingInputSchema>;
 
 /**
- * Input DTO for Closing a Finding (VERIFIED -> CLOSED, or Admin OPEN -> CLOSED).
+ * Input DTO for Closing a Finding (VERIFIED -> CLOSED by Analyst).
  */
 export const CloseFindingInputSchema = z
   .object({
@@ -96,7 +96,24 @@ export const CloseFindingInputSchema = z
 export type CloseFindingInput = z.infer<typeof CloseFindingInputSchema>;
 
 /**
- * Input DTO for Reopening a Finding (CLOSED -> REOPENED).
+ * Input DTO for Exceptional Admin Finding Force-Close (OPEN -> CLOSED).
+ * Requirements: FR-005, OLI-11 (Admin exceptional action; mandatory justification required).
+ */
+export const ForceCloseFindingInputSchema = z
+  .object({
+    expectedVersion: ExpectedVersionSchema,
+    justification: z
+      .string()
+      .trim()
+      .min(1, 'Business justification is required for exceptional force-close')
+      .max(5000, 'Justification cannot exceed 5000 characters'),
+  })
+  .strict();
+export type ForceCloseFindingInput = z.infer<typeof ForceCloseFindingInputSchema>;
+
+/**
+ * Input DTO for Reopening a Finding.
+ * Preserved for Gate 3A schema compatibility; operational code uses ForceReopenFindingInputSchema or VerifyFindingInputSchema.
  */
 export const ReopenFindingInputSchema = z
   .object({
@@ -105,6 +122,22 @@ export const ReopenFindingInputSchema = z
   })
   .strict();
 export type ReopenFindingInput = z.infer<typeof ReopenFindingInputSchema>;
+
+/**
+ * Input DTO for Exceptional Admin Finding Force-Reopen (CLOSED -> REOPENED).
+ * Requirements: FR-008, OLI-11 (Admin exceptional action; mandatory justification required).
+ */
+export const ForceReopenFindingInputSchema = z
+  .object({
+    expectedVersion: ExpectedVersionSchema,
+    justification: z
+      .string()
+      .trim()
+      .min(1, 'Business justification is required for exceptional force-reopen')
+      .max(5000, 'Justification cannot exceed 5000 characters'),
+  })
+  .strict();
+export type ForceReopenFindingInput = z.infer<typeof ForceReopenFindingInputSchema>;
 
 /**
  * Input DTO for Updating Finding Metadata (title, description, severity, category, cvss).
