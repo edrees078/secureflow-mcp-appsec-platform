@@ -268,4 +268,53 @@ export class PrismaFindingRepository implements IFindingRepository {
     });
     return events.map((e) => this.mapEvent(e));
   }
+
+  public async lockFinding(
+    id: string,
+    mode: 'SHARE' | 'UPDATE' = 'SHARE',
+  ): Promise<FindingEntity | null> {
+    const lockClause = mode === 'UPDATE' ? Prisma.sql`FOR UPDATE` : Prisma.sql`FOR SHARE`;
+    const rows = await this.client.$queryRaw<
+      Array<{
+        id: string;
+        project_id: string;
+        title: string;
+        description: string;
+        severity: import('@secureflow/schemas').FindingSeverity;
+        category: import('@secureflow/schemas').FindingCategory;
+        cvss_score: unknown;
+        status: import('@secureflow/schemas').FindingStatus;
+        created_by_id: string;
+        assigned_to_id: string | null;
+        due_date: Date | null;
+        is_deleted: boolean;
+        version: number;
+        created_at: Date;
+        updated_at: Date;
+      }>
+    >(
+      Prisma.sql`SELECT id, project_id, title, description, severity, category, cvss_score, status, created_by_id, assigned_to_id, due_date, is_deleted, version, created_at, updated_at FROM findings WHERE id = ${id}::uuid ${lockClause}`,
+    );
+    const row = rows[0];
+    if (!row) {
+      return null;
+    }
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      title: row.title,
+      description: row.description,
+      severity: row.severity,
+      category: row.category,
+      cvssScore: row.cvss_score !== null && row.cvss_score !== undefined ? Number(row.cvss_score) : null,
+      status: row.status,
+      createdById: row.created_by_id,
+      assignedToId: row.assigned_to_id,
+      dueDate: row.due_date,
+      isDeleted: row.is_deleted,
+      version: row.version,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
 }

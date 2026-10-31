@@ -51,7 +51,7 @@ export function createDomainServices(
   return {
     projectService: new ProjectService(dbManager),
     auditService: new AuditService(dbManager),
-    findingService: new FindingService({ db: dbManager }),
+    findingService: new FindingService(dbManager),
     close: async () => {
       if (isOwned) {
         await dbManager.shutdown();

@@ -331,6 +331,7 @@ export interface IFindingRepository {
   softDelete(id: string, expectedVersion: number): Promise<FindingEntity>;
   addEvent(data: CreateFindingEventRepoData): Promise<FindingEventEntity>;
   getEvents(findingId: string): Promise<FindingEventEntity[]>;
+  lockFinding(id: string, mode?: 'SHARE' | 'UPDATE'): Promise<FindingEntity | null>;
 }
 
 export interface ITaskRepository {

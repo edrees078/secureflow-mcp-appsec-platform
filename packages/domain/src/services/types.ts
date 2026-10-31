@@ -31,14 +31,12 @@ import type {
   ForceReopenFindingInput,
   UpdateFindingMetadataInput,
   SoftDeleteFindingInput,
+  ListFindingsFilterInput,
   CreateProjectInput,
   UpdateProjectInput,
   AddProjectMemberInput,
   UpdateTaskNotesInput,
   QueryAuditEventsInput,
-  FindingSeverity,
-  FindingCategory,
-  FindingStatus,
 } from '@secureflow/schemas';
 
 import type { ActorContext } from '../policy/actor-context.js';
@@ -56,22 +54,12 @@ import type {
 export type {
   ForceCloseFindingInput,
   ForceReopenFindingInput,
+  ListFindingsFilterInput,
 };
 
 // ============================================================================
 // Service Query & Mutation Filter Contracts
 // ============================================================================
-
-export interface ListFindingsFilterInput {
-  readonly projectId?: string;
-  readonly status?: FindingStatus;
-  readonly severity?: FindingSeverity;
-  readonly category?: FindingCategory;
-  readonly assignedToId?: string;
-  readonly search?: string;
-  readonly page?: number;
-  readonly limit?: number;
-}
 
 export interface ListProjectsFilterInput {
   readonly search?: string;

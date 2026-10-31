@@ -92,6 +92,7 @@ export function createTestDeveloperActor(
 
 import { ProjectService } from '../services/project-service.js';
 import { AuditService } from '../services/audit-service.js';
+import { FindingService } from '../services/finding-service.js';
 import type { RepositoryContainer } from '../db/repositories/types.js';
 
 export type { RepositoryContainer };
@@ -110,4 +111,12 @@ export function createTestProjectService(repositories: RepositoryContainer): Pro
  */
 export function createTestAuditService(repositories: RepositoryContainer): AuditService {
   return new AuditService({ repositories });
+}
+
+/**
+ * Creates a test FindingService instance with injected mock or in-memory repositories.
+ * Strictly forbidden from being used in production application code.
+ */
+export function createTestFindingService(repositories: RepositoryContainer): FindingService {
+  return new FindingService({ repositories });
 }

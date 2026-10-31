@@ -62,9 +62,15 @@ $$\text{USERS (Level 0)} \longrightarrow \text{PROJECT (Level 1)} \longrightarro
 - **PostgreSQL Lock Conflicts:** In PostgreSQL, `FOR UPDATE` and `FOR SHARE` conflict:
   - If the operational mutation starts first: It holds `FOR SHARE`, blocking `removeMember` until the operational transaction commits. Authorization is verified and linearized before revocation.
   - If `removeMember` starts first: It holds `FOR UPDATE`, blocking the operational transaction. Once `removeMember` commits and deletes the membership row, the operational transaction's `FOR SHARE` query returns zero rows, immediately failing closed with `403 Forbidden` (`FORBIDDEN_NOT_MEMBER`) and rolling back.
-- **Account Deactivation & Global-Role Changes:**
-  - Administrative user deactivation sets `users.is_active = false` under `SELECT FOR UPDATE` on `users`.
-  - Privileged operations re-verify `users.is_active = true` and `global_role = 'ADMIN'` within the transaction boundary.
+- **Account Deactivation & Global-Role Changes (Concurrency & Serialization Guarantees):**
+  - Administrative user deactivation sets `users.is_active = false` under `SELECT ... FOR UPDATE` on `users`.
+  - Operational transactions acquire `SELECT ... FOR SHARE` on the calling actor's `users` record (Level 0).
+  - In PostgreSQL, `FOR UPDATE` and `FOR SHARE` conflict on the same row. This establishes deterministic two-way serialization:
+    1. **Deactivation Committed First:** If an administrative deactivation transaction commits before the operational transaction acquires its Level 0 lock, the operational transaction reads `user.is_active = false` and fails closed immediately with HTTP 403 `ForbiddenError`.
+    2. **Operational Mutation Locked First:** If the operational transaction acquires its Level 0 `FOR SHARE` lock before the administrative deactivation transaction acquires `FOR UPDATE`, the operational transaction proceeds to completion with valid authorization while the deactivation transaction waits. Once the operational transaction commits, the deactivation transaction executes and deactivates the user. This is a valid and safe serialization order.
+    3. **Subsequent Operations Denied:** Any subsequent operational requests submitted after the deactivation transaction commits will immediately read `user.is_active = false` and be denied fail-closed with HTTP 403.
+    4. **Stale Snapshot Prevention:** A transaction must never authorize using stale account state when a conflicting account update committed before its Level 0 authorization lock was obtained.
+  - Overly broad claims that *every* overlapping mutation must fail regardless of lock acquisition order are incorrect: row-level locking guarantees sequential consistency and valid serialization.
 - **Scope of Row-Locking Guarantees:**
   - Membership row-locking alone does *not* solve all authorization races. While row-locking on `project_members` linearizes concurrent project-level membership revocation against operational mutations on that project, authorization races involving global roles, account deactivations, or project lifecycle transitions require locking on their respective parent rows (`users` at Level 0, `projects` at Level 1).
   - Furthermore, database row locks only operate within the boundary of active transactions; cryptographic caller authentication is handled upstream at the transport boundary (Phase 4).
@@ -135,7 +141,7 @@ When authorized, the transactional `ProjectService` implementation in Sub-Gate 3
 
 1. **Account Deactivation & Global-Role Changes:**
    - User state modifications must acquire Level 0 row locks (`SELECT id FROM users WHERE id = $1 FOR UPDATE`).
-   - Deactivation (`is_active = false`) and global-role changes must cascade or cause concurrent operations verifying actor freshness to abort fail-closed.
+   - Deactivation (`is_active = false`) and global-role changes serialize against operational Level 0 `FOR SHARE` locks. If deactivation commits first, concurrent and subsequent operational requests abort fail-closed with HTTP 403; if operational lock is acquired first, the mutation completes authorized before deactivation commits.
 
 2. **Project Membership Addition & Revocation:**
    - Membership additions must acquire a Level 1 `FOR SHARE` lock on `projects` before inserting into `project_members`, relying on the composite unique constraint `project_members_project_id_user_id_key` to serialize duplicates.
@@ -160,3 +166,33 @@ When authorized, the transactional `ProjectService` implementation in Sub-Gate 3
 7. **Safe Concurrency Failure Handling:**
    - Deadlocks (`40P01`), serialization failures (`40001`), and lock acquisition timeouts (`55P03`) must be trapped, logged with correlation IDs, and mapped to standardized HTTP 409 Conflict or HTTP 504 Gateway Timeout domain errors.
    - Under no circumstances should unhandled database lock exceptions leak raw internal database errors or leave connections hanging.
+
+---
+
+## 9. Gate 3D Implementation Sequence & Sub-Gate Boundaries
+
+The Phase 3 Gate 3D domain service rollout is strictly sequenced across six sub-gates to maintain architectural integrity, lock ordering consistency, and verifiable test coverage:
+
+- **Sub-Gate 3D.1 (Accepted):** Service contracts, typed interfaces (`IProjectService`, `IFindingService`, `ITaskService`, `IAuditService`), `ActorContext` parameter requirements, runtime DTO validation, and testing persona isolation under `@secureflow/domain/testing`.
+- **Sub-Gate 3D.2 (Accepted):** Transactional `ProjectService` (8 operations), authorized `AuditService`, `PrismaUserRepository`, deterministic multi-user lock ordering, authoritative authorization revalidation, and production dependency injection root (`createDomainServices`).
+- **Sub-Gate 3D.3 (Current):** Transactional `FindingService` initial operational core:
+  - `createFinding`: Project Analyst scoped, Level 0 $\to$ Level 1 $\to$ Level 2 locking, atomic `FindingEvent` + `AuditEvent`.
+  - `getFinding`: Authoritative DB check, existence hiding (404 on unassigned/non-member access).
+  - `listFindings`: Database-filtered query scopes, runtime `ListFindingsFilterInputSchema` validation, persona isolation, matching count and fetch WHERE clauses.
+  - `updateFindingMetadata`: Analyst scoped, preliminary safe lookup $\to$ Level 0 $\to$ Level 1 $\to$ Level 2 $\to$ Level 3 locking, OCC version compare-and-increment, atomic audit diff.
+  - `triageFinding`: Lifecycle transition `OPEN -> TRIAGED`, Level 0 $\to$ Level 1 $\to$ Level 2 $\to$ Level 3 locking, OCC compare-and-increment, atomic audit logging.
+- **Sub-Gate 3D.4 (Upcoming):** Assignment, Remediation & Verification:
+  - `assignFinding`: Analyst-scoped assignment (`TRIAGED -> ASSIGNED`), atomic `TaskService` task creation (`RemediationTask`).
+  - `submitRemediation`: Developer-scoped remediation submission (`IN_PROGRESS -> READY_FOR_REVIEW`).
+  - `verifyFinding` / `confirmVerification`: Analyst-scoped verification (`READY_FOR_REVIEW -> VERIFIED`), strict separation-of-duties check (verifier $\ne$ submitter).
+  - `rejectVerification`: Analyst-scoped remediation rejection (`READY_FOR_REVIEW -> REOPENED`), task reversion.
+  - `TaskService`: Authorized remediation task workflows, progress notes, and lifecycle state management.
+- **Sub-Gate 3D.5 (Upcoming):** Lifecycle Finalization & Administrative Actions:
+  - `closeFinding`: Lifecycle closure (`VERIFIED -> CLOSED`).
+  - `forceCloseFinding`: Administrator-scoped forced closure from any non-closed state with mandatory justification and atomic audit event.
+  - `forceReopenFinding`: Administrator-scoped forced reopening with mandatory justification and atomic audit event.
+  - `softDeleteFinding`: Administrator-scoped soft deletion (`is_deleted = true`), cascading task deletion/hiding, existence hiding.
+- **Sub-Gate 3D.6 (Upcoming):** End-to-End Verification & High-Concurrency Hardening:
+  - Full multi-threaded and concurrent race-condition test suites across all operations.
+  - Cross-service orchestration and stress verification.
+  - Final Gate 3D sign-off and delivery.

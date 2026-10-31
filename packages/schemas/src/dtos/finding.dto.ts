@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { FindingCategorySchema, FindingSeveritySchema } from '../enums.js';
+import { FindingCategorySchema, FindingSeveritySchema, FindingStatusSchema } from '../enums.js';
 import { ExpectedVersionSchema, UuidSchema } from './common.js';
 
 export { ExpectedVersionSchema };
@@ -154,6 +154,24 @@ export const UpdateFindingMetadataInputSchema = z
   })
   .strict();
 export type UpdateFindingMetadataInput = z.infer<typeof UpdateFindingMetadataInputSchema>;
+
+/**
+ * Input DTO for Querying / Listing Findings.
+ */
+export const ListFindingsFilterInputSchema = z
+  .object({
+    projectId: UuidSchema.optional(),
+    status: FindingStatusSchema.optional(),
+    severity: FindingSeveritySchema.optional(),
+    category: FindingCategorySchema.optional(),
+    assignedToId: UuidSchema.optional(),
+    search: z.string().trim().max(200).optional(),
+    page: z.number().int().min(1).optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+    includeDeleted: z.boolean().optional(),
+  })
+  .strict();
+export type ListFindingsFilterInput = z.infer<typeof ListFindingsFilterInputSchema>;
 
 /**
  * Input DTO for Soft-Deleting a Finding.
