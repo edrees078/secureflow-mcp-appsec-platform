@@ -1087,16 +1087,17 @@ describe('Gate 3D.3 — Transactional FindingService (Unit Tests)', () => {
       );
     });
 
-    it('future stubs reject with NOT_IMPLEMENTED (501) referencing target sub-gate', async () => {
+    it('uninitialized FindingService rejects persistence operations with NOT_IMPLEMENTED (501)', async () => {
+      const uninitService = new FindingService();
       const analyst = createTestAnalystActor(projectId);
-      await expect(service.closeFinding(analyst, findingId, { expectedVersion: 1 }))
-        .rejects.toThrow(/Sub-Gate 3D\.5/);
-      await expect(service.forceCloseFinding(analyst, findingId, { expectedVersion: 1, justification: 'Valid FP justification' }))
-        .rejects.toThrow(/Sub-Gate 3D\.5/);
-      await expect(service.forceReopenFinding(analyst, findingId, { expectedVersion: 1, justification: 'Valid regression justification' }))
-        .rejects.toThrow(/Sub-Gate 3D\.5/);
-      await expect(service.softDeleteFinding(analyst, findingId, { expectedVersion: 1 }))
-        .rejects.toThrow(/Sub-Gate 3D\.5/);
+      await expect(uninitService.closeFinding(analyst, findingId, { expectedVersion: 1 }))
+        .rejects.toThrow(/NOT_IMPLEMENTED/);
+      await expect(uninitService.forceCloseFinding(analyst, findingId, { expectedVersion: 1, justification: 'Valid FP justification' }))
+        .rejects.toThrow(/NOT_IMPLEMENTED/);
+      await expect(uninitService.forceReopenFinding(analyst, findingId, { expectedVersion: 1, justification: 'Valid regression justification' }))
+        .rejects.toThrow(/NOT_IMPLEMENTED/);
+      await expect(uninitService.softDeleteFinding(analyst, findingId, { expectedVersion: 1 }))
+        .rejects.toThrow(/NOT_IMPLEMENTED/);
     });
 
     it('maps PostgreSQL deadlock error 40P01 to HTTP 409 TRANSACTION_DEADLOCK', async () => {

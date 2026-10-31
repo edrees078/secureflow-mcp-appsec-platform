@@ -4,6 +4,10 @@ import {
   AssignFindingInputSchema,
   SubmitRemediationInputSchema,
   VerifyFindingInputSchema,
+  CloseFindingInputSchema,
+  ForceCloseFindingInputSchema,
+  ForceReopenFindingInputSchema,
+  SoftDeleteFindingInputSchema,
   UpdateFindingMetadataInputSchema,
   ListFindingsFilterInputSchema,
   type CreateFindingInput,
@@ -1280,46 +1284,497 @@ export class FindingService implements IFindingService {
   }
 
   public async closeFinding(
-    _actor: ActorContext,
-    _findingId: string,
-    _input: CloseFindingInput,
+    actor: ActorContext,
+    findingId: string,
+    input: CloseFindingInput,
   ): Promise<FindingEntity> {
-    void _actor;
-    void _findingId;
-    void _input;
-    throw new SecureFlowError('[NOT_IMPLEMENTED] FindingService.closeFinding scheduled for Sub-Gate 3D.5', 'NOT_IMPLEMENTED', 501);
+    const parsed = CloseFindingInputSchema.parse(input);
+    const repos = this.getRepos();
+
+    // 1. Preliminary safe lookup to determine target project and enforce existence hiding
+    const initialFinding = await repos.findingRepo.findById(findingId, { unrestricted: true });
+    if (!initialFinding || initialFinding.isDeleted) {
+      throw new EntityNotFoundError('Finding not found');
+    }
+    const targetProjectId = initialFinding.projectId;
+
+    // Preliminary authorization check against ActorContext snapshot (fast fail)
+    const initialActor = await this.getAuthoritativeActor(actor, repos.userRepo);
+    FindingPolicy.authorize(initialActor, 'close', {
+      finding: initialFinding,
+      projectId: targetProjectId,
+    });
+
+    try {
+      return await this.executeTransaction(async (txRepos) => {
+        // Level 0: Row lock on actor user
+        const lockedUsers = await txRepos.userRepo.lockUsers([actor.id]);
+        const user = lockedUsers.get(actor.id);
+        if (!user) {
+          throw new EntityNotFoundError('User not found');
+        }
+        if (!user.isActive) {
+          throw new ForbiddenError('Actor account is deactivated');
+        }
+
+        // Level 1: Row lock on target project
+        const lockedProject = await txRepos.projectRepo.lockProject(targetProjectId, 'SHARE');
+        if (!lockedProject) {
+          throw new EntityNotFoundError('Finding not found');
+        }
+
+        // Level 2: Row lock on project membership
+        const lockedMember = await txRepos.projectRepo.lockMember(targetProjectId, actor.id, 'SHARE');
+        if (!lockedMember) {
+          throw new EntityNotFoundError('Finding not found');
+        }
+
+        const freshActor = new ActorContext({
+          id: user.id,
+          globalRole: user.globalRole,
+          isActive: user.isActive,
+          memberships: [{ projectId: targetProjectId, role: lockedMember.role }],
+        });
+
+        // Existence hiding for archived projects: verify membership first, then check active project status
+        if (!lockedProject.isActive) {
+          throw new ForbiddenError('Project is archived and cannot be modified');
+        }
+
+        // Level 3: Row lock on finding for update
+        const lockedFinding = await txRepos.findingRepo.lockFinding(findingId, 'UPDATE');
+        if (!lockedFinding || lockedFinding.isDeleted || lockedFinding.projectId !== targetProjectId) {
+          throw new EntityNotFoundError('Finding not found');
+        }
+
+        // Authorize under lock
+        FindingPolicy.authorize(freshActor, 'close', {
+          finding: lockedFinding,
+          projectId: targetProjectId,
+        });
+
+        // Optimistic Concurrency Control (OCC) version check under lock precedes state check
+        if (lockedFinding.version !== parsed.expectedVersion) {
+          throw new ConcurrencyConflictError(
+            `Optimistic concurrency conflict on Finding '${findingId}'. Expected version ${parsed.expectedVersion}, but found version ${lockedFinding.version}.`,
+            lockedFinding.version,
+            parsed.expectedVersion,
+          );
+        }
+
+        // State Machine validation: only VERIFIED findings can transition to CLOSED
+        if (lockedFinding.status !== 'VERIFIED') {
+          throw new InvalidStateTransitionError(
+            `Cannot close finding '${findingId}': current status is '${lockedFinding.status}', expected 'VERIFIED'`,
+            lockedFinding.status,
+            'CLOSED',
+          );
+        }
+
+        // Atomic update to CLOSED
+        const updatedFinding = await txRepos.findingRepo.updateAtomic(findingId, {
+          expectedVersion: parsed.expectedVersion,
+          status: 'CLOSED',
+        });
+
+        // Append finding lifecycle event
+        await txRepos.findingRepo.addEvent({
+          findingId,
+          actorId: actor.id,
+          eventType: 'STATUS_CHANGED',
+          previousStatus: 'VERIFIED',
+          newStatus: 'CLOSED',
+          metadata: parsed.notes ? { notes: parsed.notes } : null,
+        });
+
+        // Append audit event
+        await txRepos.auditRepo.append({
+          actorId: actor.id,
+          eventCategory: 'FINDING',
+          eventType: 'finding.closed',
+          resourceId: findingId,
+          resourceType: 'finding',
+          beforeState: {
+            status: lockedFinding.status,
+            version: lockedFinding.version,
+          },
+          afterState: {
+            status: updatedFinding.status,
+            version: updatedFinding.version,
+            ...(parsed.notes ? { notes: parsed.notes } : {}),
+          },
+        });
+
+        return updatedFinding;
+      });
+    } catch (err) {
+      handleDatabaseConcurrencyError(err);
+    }
   }
 
   public async forceCloseFinding(
-    _actor: ActorContext,
-    _findingId: string,
-    _input: ForceCloseFindingInput,
+    actor: ActorContext,
+    findingId: string,
+    input: ForceCloseFindingInput,
   ): Promise<FindingEntity> {
-    void _actor;
-    void _findingId;
-    void _input;
-    throw new SecureFlowError('[NOT_IMPLEMENTED] FindingService.forceCloseFinding scheduled for Sub-Gate 3D.5', 'NOT_IMPLEMENTED', 501);
+    const parsed = ForceCloseFindingInputSchema.parse(input);
+    const repos = this.getRepos();
+
+    // 1. Preliminary safe lookup
+    const initialFinding = await repos.findingRepo.findById(findingId, { unrestricted: true });
+    if (!initialFinding || initialFinding.isDeleted) {
+      throw new EntityNotFoundError('Finding not found');
+    }
+    const targetProjectId = initialFinding.projectId;
+
+    // Preliminary authorization check against ActorContext snapshot (fast fail)
+    const initialActor = await this.getAuthoritativeActor(actor, repos.userRepo);
+    FindingPolicy.authorize(initialActor, 'force_close', {
+      finding: initialFinding,
+      projectId: targetProjectId,
+    });
+
+    try {
+      return await this.executeTransaction(async (txRepos) => {
+        // Level 0: Row lock on actor user
+        const lockedUsers = await txRepos.userRepo.lockUsers([actor.id]);
+        const user = lockedUsers.get(actor.id);
+        if (!user) {
+          throw new EntityNotFoundError('User not found');
+        }
+        if (!user.isActive) {
+          throw new ForbiddenError('Actor account is deactivated');
+        }
+        if (user.globalRole !== 'ADMIN') {
+          throw new ForbiddenError("Action 'force_close' requires Administrator role");
+        }
+
+        // Level 1: Row lock on target project
+        const lockedProject = await txRepos.projectRepo.lockProject(targetProjectId, 'SHARE');
+        if (!lockedProject) {
+          throw new EntityNotFoundError('Finding not found');
+        }
+        if (!lockedProject.isActive) {
+          throw new ForbiddenError('Project is archived and cannot be modified');
+        }
+
+        // Level 2: Omitted for Admin (global role does not require project membership)
+        const freshActor = new ActorContext({
+          id: user.id,
+          globalRole: user.globalRole,
+          isActive: user.isActive,
+          memberships: [],
+        });
+
+        // Level 3: Row lock on finding for update
+        const lockedFinding = await txRepos.findingRepo.lockFinding(findingId, 'UPDATE');
+        if (!lockedFinding || lockedFinding.isDeleted || lockedFinding.projectId !== targetProjectId) {
+          throw new EntityNotFoundError('Finding not found');
+        }
+
+        // Authorize under lock
+        FindingPolicy.authorize(freshActor, 'force_close', {
+          finding: lockedFinding,
+          projectId: targetProjectId,
+        });
+
+        // Optimistic Concurrency Control (OCC) version check under lock precedes state check
+        if (lockedFinding.version !== parsed.expectedVersion) {
+          throw new ConcurrencyConflictError(
+            `Optimistic concurrency conflict on Finding '${findingId}'. Expected version ${parsed.expectedVersion}, but found version ${lockedFinding.version}.`,
+            lockedFinding.version,
+            parsed.expectedVersion,
+          );
+        }
+
+        // Exceptional Admin closure: only OPEN findings can transition to CLOSED via force_close
+        if (lockedFinding.status !== 'OPEN') {
+          throw new InvalidStateTransitionError(
+            `Cannot force-close finding '${findingId}': current status is '${lockedFinding.status}', expected 'OPEN'`,
+            lockedFinding.status,
+            'CLOSED',
+          );
+        }
+
+        // Atomic update to CLOSED
+        const updatedFinding = await txRepos.findingRepo.updateAtomic(findingId, {
+          expectedVersion: parsed.expectedVersion,
+          status: 'CLOSED',
+        });
+
+        // Append finding lifecycle event with justification
+        await txRepos.findingRepo.addEvent({
+          findingId,
+          actorId: actor.id,
+          eventType: 'STATUS_CHANGED',
+          previousStatus: 'OPEN',
+          newStatus: 'CLOSED',
+          metadata: { justification: parsed.justification },
+        });
+
+        // Append audit event with justification
+        await txRepos.auditRepo.append({
+          actorId: actor.id,
+          eventCategory: 'FINDING',
+          eventType: 'finding.force_closed',
+          resourceId: findingId,
+          resourceType: 'finding',
+          beforeState: {
+            status: lockedFinding.status,
+            version: lockedFinding.version,
+          },
+          afterState: {
+            status: updatedFinding.status,
+            version: updatedFinding.version,
+            justification: parsed.justification,
+          },
+        });
+
+        return updatedFinding;
+      });
+    } catch (err) {
+      handleDatabaseConcurrencyError(err);
+    }
   }
 
   public async forceReopenFinding(
-    _actor: ActorContext,
-    _findingId: string,
-    _input: ForceReopenFindingInput,
+    actor: ActorContext,
+    findingId: string,
+    input: ForceReopenFindingInput,
   ): Promise<FindingEntity> {
-    void _actor;
-    void _findingId;
-    void _input;
-    throw new SecureFlowError('[NOT_IMPLEMENTED] FindingService.forceReopenFinding scheduled for Sub-Gate 3D.5', 'NOT_IMPLEMENTED', 501);
+    const parsed = ForceReopenFindingInputSchema.parse(input);
+    const repos = this.getRepos();
+
+    // 1. Preliminary safe lookup
+    const initialFinding = await repos.findingRepo.findById(findingId, { unrestricted: true });
+    if (!initialFinding || initialFinding.isDeleted) {
+      throw new EntityNotFoundError('Finding not found');
+    }
+    const targetProjectId = initialFinding.projectId;
+
+    // Preliminary authorization check against ActorContext snapshot (fast fail)
+    const initialActor = await this.getAuthoritativeActor(actor, repos.userRepo);
+    FindingPolicy.authorize(initialActor, 'force_reopen', {
+      finding: initialFinding,
+      projectId: targetProjectId,
+    });
+
+    try {
+      return await this.executeTransaction(async (txRepos) => {
+        // Level 0: Row lock on actor user
+        const lockedUsers = await txRepos.userRepo.lockUsers([actor.id]);
+        const user = lockedUsers.get(actor.id);
+        if (!user) {
+          throw new EntityNotFoundError('User not found');
+        }
+        if (!user.isActive) {
+          throw new ForbiddenError('Actor account is deactivated');
+        }
+        if (user.globalRole !== 'ADMIN') {
+          throw new ForbiddenError("Action 'force_reopen' requires Administrator role");
+        }
+
+        // Level 1: Row lock on target project
+        const lockedProject = await txRepos.projectRepo.lockProject(targetProjectId, 'SHARE');
+        if (!lockedProject) {
+          throw new EntityNotFoundError('Finding not found');
+        }
+        if (!lockedProject.isActive) {
+          throw new ForbiddenError('Project is archived and cannot be modified');
+        }
+
+        // Level 2: Omitted for Admin (global role does not require project membership)
+        const freshActor = new ActorContext({
+          id: user.id,
+          globalRole: user.globalRole,
+          isActive: user.isActive,
+          memberships: [],
+        });
+
+        // Level 3: Row lock on finding for update
+        const lockedFinding = await txRepos.findingRepo.lockFinding(findingId, 'UPDATE');
+        if (!lockedFinding || lockedFinding.isDeleted || lockedFinding.projectId !== targetProjectId) {
+          throw new EntityNotFoundError('Finding not found');
+        }
+
+        // Authorize under lock
+        FindingPolicy.authorize(freshActor, 'force_reopen', {
+          finding: lockedFinding,
+          projectId: targetProjectId,
+        });
+
+        // Optimistic Concurrency Control (OCC) version check under lock precedes state check
+        if (lockedFinding.version !== parsed.expectedVersion) {
+          throw new ConcurrencyConflictError(
+            `Optimistic concurrency conflict on Finding '${findingId}'. Expected version ${parsed.expectedVersion}, but found version ${lockedFinding.version}.`,
+            lockedFinding.version,
+            parsed.expectedVersion,
+          );
+        }
+
+        // State Machine validation: only CLOSED findings can be force-reopened to REOPENED
+        if (lockedFinding.status !== 'CLOSED') {
+          throw new InvalidStateTransitionError(
+            `Cannot force-reopen finding '${findingId}': current status is '${lockedFinding.status}', expected 'CLOSED'`,
+            lockedFinding.status,
+            'REOPENED',
+          );
+        }
+
+        // Atomic update to REOPENED
+        const updatedFinding = await txRepos.findingRepo.updateAtomic(findingId, {
+          expectedVersion: parsed.expectedVersion,
+          status: 'REOPENED',
+        });
+
+        // Append finding lifecycle event with justification (eventType: REOPENED)
+        await txRepos.findingRepo.addEvent({
+          findingId,
+          actorId: actor.id,
+          eventType: 'REOPENED',
+          previousStatus: 'CLOSED',
+          newStatus: 'REOPENED',
+          metadata: { justification: parsed.justification },
+        });
+
+        // Append audit event with justification
+        await txRepos.auditRepo.append({
+          actorId: actor.id,
+          eventCategory: 'FINDING',
+          eventType: 'finding.force_reopened',
+          resourceId: findingId,
+          resourceType: 'finding',
+          beforeState: {
+            status: lockedFinding.status,
+            version: lockedFinding.version,
+          },
+          afterState: {
+            status: updatedFinding.status,
+            version: updatedFinding.version,
+            justification: parsed.justification,
+          },
+        });
+
+        return updatedFinding;
+      });
+    } catch (err) {
+      handleDatabaseConcurrencyError(err);
+    }
   }
 
   public async softDeleteFinding(
-    _actor: ActorContext,
-    _findingId: string,
-    _input: SoftDeleteFindingInput,
+    actor: ActorContext,
+    findingId: string,
+    input: SoftDeleteFindingInput,
   ): Promise<FindingEntity> {
-    void _actor;
-    void _findingId;
-    void _input;
-    throw new SecureFlowError('[NOT_IMPLEMENTED] FindingService.softDeleteFinding scheduled for Sub-Gate 3D.5', 'NOT_IMPLEMENTED', 501);
+    const parsed = SoftDeleteFindingInputSchema.parse(input);
+    const repos = this.getRepos();
+
+    // 1. Preliminary safe lookup
+    const initialFinding = await repos.findingRepo.findById(findingId, { unrestricted: true });
+    if (!initialFinding || initialFinding.isDeleted) {
+      throw new EntityNotFoundError('Finding not found');
+    }
+    const targetProjectId = initialFinding.projectId;
+
+    // Preliminary authorization check against ActorContext snapshot (fast fail)
+    const initialActor = await this.getAuthoritativeActor(actor, repos.userRepo);
+    FindingPolicy.authorize(initialActor, 'soft_delete', {
+      finding: initialFinding,
+      projectId: targetProjectId,
+    });
+
+    try {
+      return await this.executeTransaction(async (txRepos) => {
+        // Level 0: Row lock on actor user
+        const lockedUsers = await txRepos.userRepo.lockUsers([actor.id]);
+        const user = lockedUsers.get(actor.id);
+        if (!user) {
+          throw new EntityNotFoundError('User not found');
+        }
+        if (!user.isActive) {
+          throw new ForbiddenError('Actor account is deactivated');
+        }
+
+        // Level 1: Row lock on target project
+        const lockedProject = await txRepos.projectRepo.lockProject(targetProjectId, 'SHARE');
+        if (!lockedProject) {
+          throw new EntityNotFoundError('Finding not found');
+        }
+
+        // Level 2: Row lock on project membership
+        const lockedMember = await txRepos.projectRepo.lockMember(targetProjectId, actor.id, 'SHARE');
+        if (!lockedMember) {
+          throw new EntityNotFoundError('Finding not found');
+        }
+
+        const freshActor = new ActorContext({
+          id: user.id,
+          globalRole: user.globalRole,
+          isActive: user.isActive,
+          memberships: [{ projectId: targetProjectId, role: lockedMember.role }],
+        });
+
+        // Existence hiding for archived projects: verify membership first, then check active project status
+        if (!lockedProject.isActive) {
+          throw new ForbiddenError('Project is archived and cannot be modified');
+        }
+
+        // Level 3: Row lock on finding for update
+        const lockedFinding = await txRepos.findingRepo.lockFinding(findingId, 'UPDATE');
+        if (!lockedFinding || lockedFinding.isDeleted || lockedFinding.projectId !== targetProjectId) {
+          throw new EntityNotFoundError('Finding not found');
+        }
+
+        // Authorize under lock
+        FindingPolicy.authorize(freshActor, 'soft_delete', {
+          finding: lockedFinding,
+          projectId: targetProjectId,
+        });
+
+        // Optimistic Concurrency Control (OCC) version check under lock
+        if (lockedFinding.version !== parsed.expectedVersion) {
+          throw new ConcurrencyConflictError(
+            `Optimistic concurrency conflict on Finding '${findingId}'. Expected version ${parsed.expectedVersion}, but found version ${lockedFinding.version}.`,
+            lockedFinding.version,
+            parsed.expectedVersion,
+          );
+        }
+
+        // Soft deletion sets isDeleted: true and increments version via repository softDelete
+        const updatedFinding = await txRepos.findingRepo.softDelete(findingId, parsed.expectedVersion);
+
+        // Append finding lifecycle event (eventType: DELETED)
+        await txRepos.findingRepo.addEvent({
+          findingId,
+          actorId: actor.id,
+          eventType: 'DELETED',
+          previousStatus: lockedFinding.status,
+          newStatus: lockedFinding.status,
+          metadata: null,
+        });
+
+        // Append audit event
+        await txRepos.auditRepo.append({
+          actorId: actor.id,
+          eventCategory: 'FINDING',
+          eventType: 'finding.deleted',
+          resourceId: findingId,
+          resourceType: 'finding',
+          beforeState: {
+            isDeleted: false,
+            version: lockedFinding.version,
+          },
+          afterState: {
+            isDeleted: true,
+            version: updatedFinding.version,
+          },
+        });
+
+        return updatedFinding;
+      });
+    } catch (err) {
+      handleDatabaseConcurrencyError(err);
+    }
   }
 }
