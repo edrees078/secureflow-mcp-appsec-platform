@@ -27,8 +27,6 @@ export type {
   IAuditService,
   DomainServices,
   DomainServicesConfig,
-  ProjectServiceInit,
-  AuditServiceInit,
   ListFindingsFilterInput,
   ListProjectsFilterInput,
   ForceCloseFindingInput,

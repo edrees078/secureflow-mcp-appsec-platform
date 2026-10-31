@@ -1,5 +1,5 @@
 import type { RemediationTaskStatus } from '@secureflow/schemas';
-import type { Prisma } from '../../generated/prisma/client.js';
+import { Prisma } from '../../generated/prisma/client.js';
 import type {
   CreateTaskRepoData,
   ITaskRepository,
@@ -87,5 +87,83 @@ export class PrismaTaskRepository implements ITaskRepository {
       data: updateData,
     });
     return this.mapTask(updated);
+  }
+
+  public async lockTask(
+    id: string,
+    mode: 'SHARE' | 'UPDATE' = 'SHARE',
+  ): Promise<RemediationTaskEntity | null> {
+    const lockClause = mode === 'UPDATE' ? Prisma.sql`FOR UPDATE` : Prisma.sql`FOR SHARE`;
+    const rows = await this.client.$queryRaw<
+      Array<{
+        id: string;
+        finding_id: string;
+        assigned_to_id: string;
+        assigned_by_id: string;
+        description: string;
+        notes: string | null;
+        status: RemediationTaskStatus;
+        due_date: Date | null;
+        created_at: Date;
+        updated_at: Date;
+      }>
+    >(
+      Prisma.sql`SELECT id, finding_id, assigned_to_id, assigned_by_id, description, notes, status, due_date, created_at, updated_at FROM remediation_tasks WHERE id = ${id}::uuid ${lockClause}`,
+    );
+    const row = rows[0];
+    if (!row) {
+      return null;
+    }
+    return {
+      id: row.id,
+      findingId: row.finding_id,
+      assignedToId: row.assigned_to_id,
+      assignedById: row.assigned_by_id,
+      description: row.description,
+      notes: row.notes,
+      status: row.status,
+      dueDate: row.due_date,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  public async lockActiveTaskByFindingId(
+    findingId: string,
+    mode: 'SHARE' | 'UPDATE' = 'SHARE',
+  ): Promise<RemediationTaskEntity | null> {
+    const lockClause = mode === 'UPDATE' ? Prisma.sql`FOR UPDATE` : Prisma.sql`FOR SHARE`;
+    const rows = await this.client.$queryRaw<
+      Array<{
+        id: string;
+        finding_id: string;
+        assigned_to_id: string;
+        assigned_by_id: string;
+        description: string;
+        notes: string | null;
+        status: RemediationTaskStatus;
+        due_date: Date | null;
+        created_at: Date;
+        updated_at: Date;
+      }>
+    >(
+      Prisma.sql`SELECT id, finding_id, assigned_to_id, assigned_by_id, description, notes, status, due_date, created_at, updated_at FROM remediation_tasks WHERE finding_id = ${findingId}::uuid AND status NOT IN ('VERIFIED', 'REJECTED') LIMIT 1 ${lockClause}`,
+    );
+    const row = rows[0];
+    if (!row) {
+      return null;
+    }
+    return {
+      id: row.id,
+      findingId: row.finding_id,
+      assignedToId: row.assigned_to_id,
+      assignedById: row.assigned_by_id,
+      description: row.description,
+      notes: row.notes,
+      status: row.status,
+      dueDate: row.due_date,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
   }
 }

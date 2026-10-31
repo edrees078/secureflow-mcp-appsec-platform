@@ -146,7 +146,7 @@ describe('Gate 3D.2 — Transactional ProjectService (Unit Tests)', () => {
     it('rejects construction with empty dependency object', () => {
       expect(() => new ProjectService({} as unknown as RepositoryContainer))
         .toThrow(expect.objectContaining({
-          code: 'SERVICE_INITIALIZATION_ERROR',
+          code: 'UNAUTHORIZED_PERSISTENCE_INJECTION',
           statusCode: 500,
         }));
     });
@@ -154,7 +154,7 @@ describe('Gate 3D.2 — Transactional ProjectService (Unit Tests)', () => {
     it('rejects construction with incomplete repository container', () => {
       expect(() => new ProjectService({ repositories: {} as unknown as RepositoryContainer }))
         .toThrow(expect.objectContaining({
-          code: 'SERVICE_INITIALIZATION_ERROR',
+          code: 'UNAUTHORIZED_PERSISTENCE_INJECTION',
           statusCode: 500,
         }));
     });

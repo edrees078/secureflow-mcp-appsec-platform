@@ -18,13 +18,9 @@ import type {
 import { DatabaseManager } from '../db/database-manager.js';
 import type { IAuditService } from './types.js';
 import { handleDatabaseConcurrencyError } from './concurrency-handler.js';
+import { isAuthorizedTestPersistence } from './persistence-token.js';
 
-/**
- * Service initialization parameter: either trusted DatabaseManager or explicitly provided test repositories.
- */
-export type AuditServiceInit =
-  | DatabaseManager
-  | { readonly repositories: RepositoryContainer };
+export type AuditServiceInit = DatabaseManager;
 
 /**
  * Audit Log Domain Service.
@@ -45,7 +41,9 @@ export class AuditService implements IAuditService {
   private readonly db: DatabaseManager | undefined;
   private readonly directRepos: RepositoryContainer | undefined;
 
-  public constructor(init: AuditServiceInit) {
+  public constructor(db: DatabaseManager);
+  public constructor(testInit: unknown);
+  public constructor(init: unknown) {
     if (!init) {
       throw new SecureFlowError(
         'AuditService initialization failed: valid DatabaseManager or test repository container required',
@@ -57,20 +55,20 @@ export class AuditService implements IAuditService {
     if (init instanceof DatabaseManager) {
       this.db = init;
       this.directRepos = undefined;
-    } else if (
-      typeof init === 'object' &&
-      'repositories' in init &&
-      init.repositories &&
-      typeof init.repositories === 'object' &&
-      init.repositories.auditRepo &&
-      init.repositories.userRepo
-    ) {
+    } else if (isAuthorizedTestPersistence(init)) {
+      if (!init.repositories.auditRepo || !init.repositories.userRepo) {
+        throw new SecureFlowError(
+          'AuditService initialization failed: incomplete repository container',
+          'SERVICE_INITIALIZATION_ERROR',
+          500,
+        );
+      }
       this.directRepos = init.repositories;
       this.db = undefined;
     } else {
       throw new SecureFlowError(
-        'AuditService initialization failed: invalid or contradictory dependencies provided',
-        'SERVICE_INITIALIZATION_ERROR',
+        'Direct repository injection is prohibited outside @secureflow/domain/testing',
+        'UNAUTHORIZED_PERSISTENCE_INJECTION',
         500,
       );
     }

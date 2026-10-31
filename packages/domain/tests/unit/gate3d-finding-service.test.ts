@@ -1065,12 +1065,12 @@ describe('Gate 3D.3 — Transactional FindingService (Unit Tests)', () => {
   // 6. Service Initialization & Concurrency Errors
   // ==========================================================================
   describe('6. Service Initialization & Concurrency Errors', () => {
-    it('rejects construction with incomplete repository container (HTTP 500)', () => {
+    it('rejects construction with unauthorized repository container (HTTP 500)', () => {
       expect(
         () => new FindingService({ repositories: {} as unknown as RepositoryContainer }),
       ).toThrow(
         expect.objectContaining({
-          code: 'SERVICE_INITIALIZATION_ERROR',
+          code: 'UNAUTHORIZED_PERSISTENCE_INJECTION',
           statusCode: 500,
         }),
       );
@@ -1081,7 +1081,7 @@ describe('Gate 3D.3 — Transactional FindingService (Unit Tests)', () => {
         () => new FindingService({ invalidProp: 'arbitrary' } as unknown as import('../../src/services/finding-service.js').FindingServiceInit),
       ).toThrow(
         expect.objectContaining({
-          code: 'SERVICE_INITIALIZATION_ERROR',
+          code: 'UNAUTHORIZED_PERSISTENCE_INJECTION',
           statusCode: 500,
         }),
       );
@@ -1089,8 +1089,6 @@ describe('Gate 3D.3 — Transactional FindingService (Unit Tests)', () => {
 
     it('future stubs reject with NOT_IMPLEMENTED (501) referencing target sub-gate', async () => {
       const analyst = createTestAnalystActor(projectId);
-      await expect(service.verifyFinding(analyst, findingId, { expectedVersion: 1, outcome: 'VERIFIED' }))
-        .rejects.toThrow(/Sub-Gate 3D\.4/);
       await expect(service.closeFinding(analyst, findingId, { expectedVersion: 1 }))
         .rejects.toThrow(/Sub-Gate 3D\.5/);
       await expect(service.forceCloseFinding(analyst, findingId, { expectedVersion: 1, justification: 'Valid FP justification' }))

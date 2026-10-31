@@ -93,7 +93,9 @@ export function createTestDeveloperActor(
 import { ProjectService } from '../services/project-service.js';
 import { AuditService } from '../services/audit-service.js';
 import { FindingService } from '../services/finding-service.js';
+import { TaskService } from '../services/task-service.js';
 import type { RepositoryContainer } from '../db/repositories/types.js';
+import { TEST_PERSISTENCE_TOKEN } from '../services/persistence-token.js';
 
 export type { RepositoryContainer };
 
@@ -102,7 +104,7 @@ export type { RepositoryContainer };
  * Strictly forbidden from being used in production application code.
  */
 export function createTestProjectService(repositories: RepositoryContainer): ProjectService {
-  return new ProjectService({ repositories });
+  return new ProjectService({ repositories, [TEST_PERSISTENCE_TOKEN]: true } as never);
 }
 
 /**
@@ -110,7 +112,7 @@ export function createTestProjectService(repositories: RepositoryContainer): Pro
  * Strictly forbidden from being used in production application code.
  */
 export function createTestAuditService(repositories: RepositoryContainer): AuditService {
-  return new AuditService({ repositories });
+  return new AuditService({ repositories, [TEST_PERSISTENCE_TOKEN]: true } as never);
 }
 
 /**
@@ -118,5 +120,13 @@ export function createTestAuditService(repositories: RepositoryContainer): Audit
  * Strictly forbidden from being used in production application code.
  */
 export function createTestFindingService(repositories: RepositoryContainer): FindingService {
-  return new FindingService({ repositories });
+  return new FindingService({ repositories, [TEST_PERSISTENCE_TOKEN]: true } as never);
+}
+
+/**
+ * Creates a test TaskService instance with injected mock or in-memory repositories.
+ * Strictly forbidden from being used in production application code.
+ */
+export function createTestTaskService(repositories: RepositoryContainer): TaskService {
+  return new TaskService({ repositories, [TEST_PERSISTENCE_TOKEN]: true } as never);
 }

@@ -1,6 +1,7 @@
 export { FindingService } from './finding-service.js';
-export { ProjectService, type ProjectServiceInit } from './project-service.js';
-export { AuditService, type AuditServiceInit } from './audit-service.js';
+export { ProjectService } from './project-service.js';
+export { AuditService } from './audit-service.js';
+export { TaskService } from './task-service.js';
 export {
   createDomainServices,
   type DomainServices,

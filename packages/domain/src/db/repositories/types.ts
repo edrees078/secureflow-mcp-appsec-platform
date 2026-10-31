@@ -345,6 +345,8 @@ export interface ITaskRepository {
     status: RemediationTaskStatus,
     notes?: string | null,
   ): Promise<RemediationTaskEntity>;
+  lockTask(id: string, mode?: 'SHARE' | 'UPDATE'): Promise<RemediationTaskEntity | null>;
+  lockActiveTaskByFindingId(findingId: string, mode?: 'SHARE' | 'UPDATE'): Promise<RemediationTaskEntity | null>;
 }
 
 /**

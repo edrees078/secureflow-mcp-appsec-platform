@@ -84,10 +84,10 @@ describe('Gate 3D.2 — AuditService (Unit Tests)', () => {
         }));
     });
 
-    it('rejects construction with incomplete repository container', () => {
+    it('rejects construction with direct repository injection outside testing subpath', () => {
       expect(() => new AuditService({ repositories: {} as unknown as RepositoryContainer }))
         .toThrow(expect.objectContaining({
-          code: 'SERVICE_INITIALIZATION_ERROR',
+          code: 'UNAUTHORIZED_PERSISTENCE_INJECTION',
           statusCode: 500,
         }));
     });

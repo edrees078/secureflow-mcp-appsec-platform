@@ -64,9 +64,23 @@ async function main() {
       expectedRule: 'boundaries/dependencies',
     },
     {
+      name: '[NEGATIVE] apps/api attempts to import test persistence injection helpers (createTestTaskService)',
+      fixtureFile: 'api-imports-persistence-injection.ts',
+      simulatedLocation: path.join(projectRoot, 'apps/api/src/fixture-api-persistence-injection.ts'),
+      expectViolation: true,
+      expectedRule: 'boundaries/dependencies',
+    },
+    {
       name: '[NEGATIVE] apps/mcp-server attempts to import domain testing helpers (@secureflow/domain/testing)',
       fixtureFile: 'mcp-imports-testing.ts',
       simulatedLocation: path.join(projectRoot, 'apps/mcp-server/src/fixture-mcp-testing.ts'),
+      expectViolation: true,
+      expectedRule: 'boundaries/dependencies',
+    },
+    {
+      name: '[NEGATIVE] apps/mcp-server attempts to import test persistence injection helpers (createTestTaskService)',
+      fixtureFile: 'mcp-imports-persistence-injection.ts',
+      simulatedLocation: path.join(projectRoot, 'apps/mcp-server/src/fixture-mcp-persistence-injection.ts'),
       expectViolation: true,
       expectedRule: 'boundaries/dependencies',
     },

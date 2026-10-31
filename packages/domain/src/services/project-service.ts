@@ -31,13 +31,9 @@ import {
   generateProjectSlug,
   handleDatabaseConcurrencyError,
 } from './concurrency-handler.js';
+import { isAuthorizedTestPersistence } from './persistence-token.js';
 
-/**
- * Service initialization parameter: either trusted DatabaseManager or explicitly provided test repositories.
- */
-export type ProjectServiceInit =
-  | DatabaseManager
-  | { readonly repositories: RepositoryContainer };
+export type ProjectServiceInit = DatabaseManager;
 
 /**
  * Transactional Project Management Domain Service.
@@ -61,7 +57,9 @@ export class ProjectService implements IProjectService {
   private readonly db: DatabaseManager | undefined;
   private readonly directRepos: RepositoryContainer | undefined;
 
-  public constructor(init: ProjectServiceInit) {
+  public constructor(db: DatabaseManager);
+  public constructor(testInit: unknown);
+  public constructor(init: unknown) {
     if (!init) {
       throw new SecureFlowError(
         'ProjectService initialization failed: valid DatabaseManager or test repository container required',
@@ -73,21 +71,20 @@ export class ProjectService implements IProjectService {
     if (init instanceof DatabaseManager) {
       this.db = init;
       this.directRepos = undefined;
-    } else if (
-      typeof init === 'object' &&
-      'repositories' in init &&
-      init.repositories &&
-      typeof init.repositories === 'object' &&
-      init.repositories.projectRepo &&
-      init.repositories.userRepo &&
-      init.repositories.auditRepo
-    ) {
+    } else if (isAuthorizedTestPersistence(init)) {
+      if (!init.repositories.projectRepo || !init.repositories.userRepo || !init.repositories.auditRepo) {
+        throw new SecureFlowError(
+          'ProjectService initialization failed: incomplete repository container',
+          'SERVICE_INITIALIZATION_ERROR',
+          500,
+        );
+      }
       this.directRepos = init.repositories;
       this.db = undefined;
     } else {
       throw new SecureFlowError(
-        'ProjectService initialization failed: invalid or contradictory dependencies provided',
-        'SERVICE_INITIALIZATION_ERROR',
+        'Direct repository injection is prohibited outside @secureflow/domain/testing',
+        'UNAUTHORIZED_PERSISTENCE_INJECTION',
         500,
       );
     }
