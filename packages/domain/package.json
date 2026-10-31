@@ -32,6 +32,7 @@
     "db:test:findings": "tsx tests/integration/gate3d-finding-service.integration.ts",
     "db:test:tasks": "tsx tests/integration/gate3d-task-service.integration.ts",
     "db:test:closure": "tsx tests/integration/gate3d-finding-closure.integration.ts",
+    "db:test:acceptance": "tsx tests/integration/gate3d-acceptance.integration.ts",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
     "test:unit": "vitest run",
