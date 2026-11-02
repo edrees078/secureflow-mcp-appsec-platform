@@ -15,6 +15,12 @@ export const envSchema = z.object({
     .enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
     .default('info'),
   CORS_ORIGIN: z.string().min(1).default('http://localhost:5173'),
+  DATABASE_URL: z
+    .string()
+    .min(1)
+    .default(
+      'postgresql://secureflow:secureflow_dev_password_change_me@127.0.0.1:5433/secureflow_dev?schema=public'
+    ),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

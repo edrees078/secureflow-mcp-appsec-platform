@@ -133,6 +133,13 @@ async function main() {
       expectViolation: true,
       expectedRule: 'boundaries/dependencies',
     },
+    {
+      name: '[NEGATIVE] apps/api/src attempts to import test helper (apps/api/tests/helpers/test-app)',
+      fixtureFile: 'api-imports-test-helpers.ts',
+      simulatedLocation: path.join(projectRoot, 'apps/api/src/fixture-api-test-helpers.ts'),
+      expectViolation: true,
+      expectedRule: 'boundaries/dependencies',
+    },
   ];
 
   let passedCount = 0;

@@ -21,7 +21,9 @@
     "build": "tsc -b",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
-    "test": "vitest run",
+    "test": "vitest run --exclude 'tests/integration/**'",
+    "test:all": "vitest run",
+    "test:integration": "vitest run tests/integration",
     "test:watch": "vitest",
     "typecheck": "tsc -b"
   },

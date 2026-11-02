@@ -1,8 +1,14 @@
 import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './logger/logger.js';
+import { createDomainServices } from '@secureflow/domain';
 
-const app = createApp();
+// Initialize production domain services container through the approved composition root
+const domainServices = createDomainServices({
+  connectionString: env.DATABASE_URL,
+});
+
+const app = createApp(domainServices);
 
 const server = app.listen(env.PORT, () => {
   logger.info(
@@ -16,15 +22,22 @@ const server = app.listen(env.PORT, () => {
   );
 });
 
-function gracefulShutdown(signal: string) {
+async function gracefulShutdown(signal: string): Promise<void> {
   logger.info({ signal }, 'Received shutdown signal, closing HTTP server gracefully...');
-  server.close((err) => {
+  server.close(async (err) => {
     if (err) {
       logger.error({ err }, 'Error during HTTP server close');
       process.exit(1);
     }
-    logger.info('HTTP server closed successfully');
-    process.exit(0);
+    try {
+      await domainServices.close();
+      logger.info('Domain services connection pool closed successfully');
+      logger.info('HTTP server closed successfully');
+      process.exit(0);
+    } catch (closeErr) {
+      logger.error({ err: closeErr }, 'Error closing domain services connection pool');
+      process.exit(1);
+    }
   });
 
   // Force shutdown after 10 seconds timeout
@@ -34,5 +47,5 @@ function gracefulShutdown(signal: string) {
   }, 10000).unref();
 }
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => void gracefulShutdown('SIGINT'));

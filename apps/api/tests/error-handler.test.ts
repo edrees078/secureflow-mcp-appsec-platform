@@ -3,7 +3,7 @@ import request from 'supertest';
 import express from 'express';
 import { createApp } from '../src/app.js';
 import { errorHandlerMiddleware } from '../src/middleware/error-handler.js';
-import { SecureFlowError } from '@secureflow/shared';
+import { EntityNotFoundError, SecureFlowError } from '@secureflow/shared';
 
 describe('Centralized Error Handling & Nested Schema', () => {
   const app = createApp();
@@ -55,6 +55,24 @@ describe('Centralized Error Handling & Nested Schema', () => {
         error: {
           code: 'PROJECT_NOT_FOUND',
           message: 'Project resource not found',
+        },
+      });
+    });
+
+    it('maps domain EntityNotFoundError to HTTP 404 with public code NOT_FOUND', async () => {
+      const testApp = express();
+      testApp.get('/test-not-found', () => {
+        throw new EntityNotFoundError('Target project not found');
+      });
+      testApp.use(errorHandlerMiddleware);
+
+      const res = await request(testApp).get('/test-not-found');
+
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Target project not found',
         },
       });
     });

@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction, ErrorRequestHandler } from 'express';
-import { SecureFlowError } from '@secureflow/shared';
+import { EntityNotFoundError, SecureFlowError } from '@secureflow/shared';
 import { logger } from '../logger/logger.js';
 
 export interface ApiErrorResponse {
@@ -41,12 +41,31 @@ export const errorHandlerMiddleware: ErrorRequestHandler = (
 
   // 3. Handle known operational SecureFlowError
   if (err instanceof SecureFlowError) {
+    const isServerError = err.statusCode >= 500;
+    // Map internal domain ENTITY_NOT_FOUND to public API contract error code NOT_FOUND
+    const publicCode =
+      err instanceof EntityNotFoundError || err.code === 'ENTITY_NOT_FOUND'
+        ? 'NOT_FOUND'
+        : err.code;
+
     const errorBody: ApiErrorResponse = {
       error: {
-        code: err.code,
-        message: err.message,
+        code: publicCode,
+        message: isServerError ? 'An internal server error occurred' : err.message,
+        ...(!isServerError && err.details !== undefined ? { details: err.details } : {}),
       },
     };
+    if (isServerError) {
+      logger.error(
+        {
+          err,
+          requestId: req.id,
+          method: req.method,
+          url: req.originalUrl || req.url,
+        },
+        'Operational server error (HTTP 5xx)'
+      );
+    }
     res.status(err.statusCode).json(errorBody);
     return;
   }
