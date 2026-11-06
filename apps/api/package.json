@@ -23,7 +23,7 @@
     "start": "node dist/server.js",
     "test": "vitest run --exclude 'tests/integration/**'",
     "test:all": "vitest run",
-    "test:integration": "vitest run tests/integration",
+    "test:integration": "vitest run tests/integration --fileParallelism=false",
     "test:watch": "vitest",
     "typecheck": "tsc -b"
   },

@@ -8,7 +8,11 @@ import {
   ActorContext,
   type DomainServices,
 } from '@secureflow/domain';
-import { SecureFlowError } from '@secureflow/shared';
+import {
+  createTestDatabaseClient,
+  validateTestDatabaseUrl,
+  type TestDatabaseClient,
+} from '@secureflow/domain/testing';
 import { createTestApp } from '../helpers/test-app.js';
 import type { Express } from 'express';
 
@@ -16,56 +20,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
-function validateTestDatabaseUrl(rawUrl?: string): string {
-  if (!rawUrl || typeof rawUrl !== 'string' || rawUrl.trim().length === 0) {
-    throw new SecureFlowError(
-      'SAFETY REFUSAL: TEST_DATABASE_URL is required and cannot be empty. Fallback to DATABASE_URL is strictly prohibited.',
-      'TEST_DATABASE_URL_REQUIRED',
-      500
-    );
-  }
-
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new SecureFlowError(
-      'SAFETY REFUSAL: TEST_DATABASE_URL is not a valid URL.',
-      'TEST_DATABASE_URL_INVALID',
-      500
-    );
-  }
-
-  const dbName = parsed.pathname.replace(/^\//, '');
-  if (dbName === 'secureflow_dev') {
-    throw new SecureFlowError(
-      'SAFETY REFUSAL: TEST_DATABASE_URL must NEVER target development database "secureflow_dev". It must target "secureflow_test".',
-      'TEST_DATABASE_TARGET_DEV_REFUSED',
-      500
-    );
-  }
-
-  if (dbName !== 'secureflow_test') {
-    throw new SecureFlowError(
-      `SAFETY REFUSAL: Target database must be "secureflow_test", got "${dbName}".`,
-      'TEST_DATABASE_TARGET_INVALID',
-      500
-    );
-  }
-
-  if (parsed.port !== '5433') {
-    throw new SecureFlowError(
-      `SAFETY REFUSAL: PostgreSQL 17 test container must run on host port 5433, got "${parsed.port}".`,
-      'TEST_DATABASE_PORT_INVALID',
-      500
-    );
-  }
-
-  return rawUrl;
-}
-
 describe('PostgreSQL 17.11 Integration: Project REST API (/api/v1/projects)', () => {
   let domainServices: DomainServices;
+  let testDbClient: TestDatabaseClient;
   let testApp: Express;
   let currentActor: ActorContext;
 
@@ -89,9 +46,11 @@ describe('PostgreSQL 17.11 Integration: Project REST API (/api/v1/projects)', ()
   });
 
   let createdProjectId: string;
+  const createdProjectIds: string[] = [];
 
   beforeAll(async () => {
     const rawTestUrl = validateTestDatabaseUrl(process.env.TEST_DATABASE_URL);
+    testDbClient = await createTestDatabaseClient(rawTestUrl);
     domainServices = createDomainServices({
       connectionString: rawTestUrl,
       maxConnections: 5,
@@ -106,8 +65,35 @@ describe('PostgreSQL 17.11 Integration: Project REST API (/api/v1/projects)', ()
   });
 
   afterAll(async () => {
-    if (domainServices) {
-      await domainServices.close();
+    let cleanupError: unknown = null;
+    try {
+      if (testDbClient && createdProjectIds.length > 0) {
+        for (const projId of createdProjectIds) {
+          await testDbClient.cleanupProjectHierarchy(projId);
+        }
+      }
+    } catch (err: unknown) {
+      cleanupError = err;
+    } finally {
+      try {
+        if (testDbClient) {
+          await testDbClient.close();
+        }
+      } catch (closeErr) {
+        if (!cleanupError) cleanupError = closeErr;
+      }
+      try {
+        if (domainServices) {
+          await domainServices.close();
+        }
+      } catch (closeErr) {
+        if (!cleanupError) cleanupError = closeErr;
+      }
+
+      if (cleanupError) {
+        const errorMsg = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+        throw new Error(`Integration teardown cleanup failure: ${errorMsg}`);
+      }
     }
   });
 
@@ -127,6 +113,8 @@ describe('PostgreSQL 17.11 Integration: Project REST API (/api/v1/projects)', ()
     expect(res.body.data.isActive).toBe(true);
 
     createdProjectId = res.body.data.id;
+    createdProjectIds.push(createdProjectId);
+    testDbClient.registerSyntheticProject(createdProjectId);
   });
 
   it('2. GET /api/v1/projects/:id — Admin retrieves persisted project record from PostgreSQL', async () => {
@@ -221,5 +209,23 @@ describe('PostgreSQL 17.11 Integration: Project REST API (/api/v1/projects)', ()
 
     expect(res.status).toBe(200);
     expect(res.body.data.isActive).toBe(false);
+  });
+
+  it('10. Database verification — Pre-existing records remain intact while synthetic project is tracked', async () => {
+    // Assert synthetic project exists in database prior to teardown
+    const checkRes = await testDbClient.query(
+      'SELECT id, is_active FROM projects WHERE id = $1;',
+      [createdProjectId]
+    );
+    expect(checkRes.rows.length).toBe(1);
+    expect(checkRes.rows[0].is_active).toBe(false);
+
+    // Assert pre-existing users are intact
+    const adminCheck = await testDbClient.query(
+      'SELECT id, is_active FROM users WHERE id = $1;',
+      [adminActor.id]
+    );
+    expect(adminCheck.rows.length).toBe(1);
+    expect(adminCheck.rows[0].is_active).toBe(true);
   });
 });
