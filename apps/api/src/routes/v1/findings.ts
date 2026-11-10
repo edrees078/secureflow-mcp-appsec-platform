@@ -10,6 +10,8 @@ import {
   VerifyFindingInputSchema,
   CloseFindingInputSchema,
   SoftDeleteFindingInputSchema,
+  ForceCloseFindingInputSchema,
+  ForceReopenFindingInputSchema,
   ListFindingsQuerySchema,
   UuidSchema,
   type CreateFindingInput,
@@ -20,6 +22,8 @@ import {
   type VerifyFindingInput,
   type CloseFindingInput,
   type SoftDeleteFindingInput,
+  type ForceCloseFindingInput,
+  type ForceReopenFindingInput,
   type ListFindingsQuery,
   type ListFindingsFilterInput,
 } from '@secureflow/schemas';
@@ -64,6 +68,8 @@ export type FindingIdParam = z.output<typeof FindingIdParamSchema>;
  *    - POST /findings/:id/verify -> 200 OK with data
  *    - POST /findings/:id/close -> 200 OK with data
  *    - DELETE /findings/:id -> 200 OK with data (soft-deleted finding record)
+ *    - POST /findings/:id/force-close -> 200 OK with data (exceptional Admin force-close)
+ *    - POST /findings/:id/force-reopen -> 200 OK with data (exceptional Admin force-reopen)
  */
 export function createFindingsRouter(services: DomainServices): ExpressRouter {
   const router = Router();
@@ -289,6 +295,50 @@ export function createFindingsRouter(services: DomainServices): ExpressRouter {
         const params = getValidatedParams<FindingIdParam>(req);
         const body = getValidatedBody<SoftDeleteFindingInput>(req);
         const finding = await findingService.softDeleteFinding(req.actor, params.id, body);
+        res.status(200).json({ data: finding });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // 11. POST /api/v1/findings/:id/force-close — Exceptional force-close finding (Global Admin, OCC)
+  router.post(
+    '/:id/force-close',
+    validateRequest({
+      params: FindingIdParamSchema,
+      body: ForceCloseFindingInputSchema,
+    }),
+    async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+      try {
+        if (!req.actor) {
+          throw new UnauthorizedError('Authentication required');
+        }
+        const params = getValidatedParams<FindingIdParam>(req);
+        const body = getValidatedBody<ForceCloseFindingInput>(req);
+        const finding = await findingService.forceCloseFinding(req.actor, params.id, body);
+        res.status(200).json({ data: finding });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // 12. POST /api/v1/findings/:id/force-reopen — Exceptional force-reopen finding (Global Admin, OCC)
+  router.post(
+    '/:id/force-reopen',
+    validateRequest({
+      params: FindingIdParamSchema,
+      body: ForceReopenFindingInputSchema,
+    }),
+    async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+      try {
+        if (!req.actor) {
+          throw new UnauthorizedError('Authentication required');
+        }
+        const params = getValidatedParams<FindingIdParam>(req);
+        const body = getValidatedBody<ForceReopenFindingInput>(req);
+        const finding = await findingService.forceReopenFinding(req.actor, params.id, body);
         res.status(200).json({ data: finding });
       } catch (err) {
         next(err);

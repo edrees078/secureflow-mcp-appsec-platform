@@ -27,6 +27,11 @@ describe('Finding Lifecycle REST API Controller (/api/v1/findings)', () => {
     memberships: [{ projectId: '11111111-1111-1111-1111-111111111111', role: 'DEVELOPER' }],
   });
 
+  const adminActor = createTestActor({
+    id: '00000000-0000-0000-0000-000000000001',
+    globalRole: 'ADMIN',
+  });
+
   const sampleFinding: FindingEntity = {
     id: '33333333-3333-3333-3333-333333333333',
     projectId: '11111111-1111-1111-1111-111111111111',
@@ -674,7 +679,285 @@ describe('Finding Lifecycle REST API Controller (/api/v1/findings)', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 11. Security & Authentication Boundaries
+  // 11. POST /api/v1/findings/:id/force-close
+  // ---------------------------------------------------------------------------
+  describe('POST /api/v1/findings/:id/force-close', () => {
+    it('forces close finding and returns HTTP 200 with closed finding', async () => {
+      const closedFinding: FindingEntity = {
+        ...sampleFinding,
+        status: 'CLOSED',
+        version: 2,
+      };
+      vi.mocked(mockServices.findingService.forceCloseFinding).mockResolvedValue(closedFinding);
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      const res = await request(app)
+        .post(`/api/v1/findings/${sampleFinding.id}/force-close`)
+        .send({
+          expectedVersion: 1,
+          justification: 'Emergency mitigation applied at cloud edge WAF layer.',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.id).toBe(sampleFinding.id);
+      expect(res.body.data.status).toBe('CLOSED');
+      expect(res.body.data.version).toBe(2);
+      expect(mockServices.findingService.forceCloseFinding).toHaveBeenCalledWith(
+        adminActor,
+        sampleFinding.id,
+        {
+          expectedVersion: 1,
+          justification: 'Emergency mitigation applied at cloud edge WAF layer.',
+        }
+      );
+    });
+
+    it('rejects force-close without justification with HTTP 400', async () => {
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      const res = await request(app)
+        .post(`/api/v1/findings/${sampleFinding.id}/force-close`)
+        .send({ expectedVersion: 1 });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      expect(mockServices.findingService.forceCloseFinding).not.toHaveBeenCalled();
+    });
+
+    it('rejects force-close with empty or whitespace-only justification (spaces, tabs, newlines) with HTTP 400', async () => {
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      for (const invalidJustification of ['', '   ', '\t\t', '\n\r\n', ' \t \n \r ']) {
+        const res = await request(app)
+          .post(`/api/v1/findings/${sampleFinding.id}/force-close`)
+          .send({ expectedVersion: 1, justification: invalidJustification });
+
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      }
+      expect(mockServices.findingService.forceCloseFinding).not.toHaveBeenCalled();
+    });
+
+    it('rejects force-close with justification exceeding 5000 characters with HTTP 400', async () => {
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      const res = await request(app)
+        .post(`/api/v1/findings/${sampleFinding.id}/force-close`)
+        .send({ expectedVersion: 1, justification: 'x'.repeat(5001) });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      expect(mockServices.findingService.forceCloseFinding).not.toHaveBeenCalled();
+    });
+
+    it('rejects force-close with invalid expectedVersion with HTTP 400', async () => {
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      const res = await request(app)
+        .post(`/api/v1/findings/${sampleFinding.id}/force-close`)
+        .send({ expectedVersion: 0, justification: 'Emergency WAF rule applied.' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      expect(mockServices.findingService.forceCloseFinding).not.toHaveBeenCalled();
+    });
+
+    it('rejects force-close with invalid finding UUID param with HTTP 400', async () => {
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      const res = await request(app)
+        .post('/api/v1/findings/not-a-valid-uuid/force-close')
+        .send({ expectedVersion: 1, justification: 'Emergency WAF rule applied.' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      expect(mockServices.findingService.forceCloseFinding).not.toHaveBeenCalled();
+    });
+
+    it('maps force-close OCC conflict to HTTP 409', async () => {
+      vi.mocked(mockServices.findingService.forceCloseFinding).mockRejectedValue(
+        new ConcurrencyConflictError('Finding version mismatch', 'CONCURRENCY_CONFLICT')
+      );
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      const res = await request(app)
+        .post(`/api/v1/findings/${sampleFinding.id}/force-close`)
+        .send({ expectedVersion: 1, justification: 'Emergency WAF rule applied.' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error.code).toBe('CONCURRENCY_CONFLICT');
+    });
+
+    it('maps force-close invalid state transition to HTTP 422', async () => {
+      vi.mocked(mockServices.findingService.forceCloseFinding).mockRejectedValue(
+        new InvalidStateTransitionError('Finding must be in OPEN state for force-close', 'INVALID_STATE_TRANSITION')
+      );
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      const res = await request(app)
+        .post(`/api/v1/findings/${sampleFinding.id}/force-close`)
+        .send({ expectedVersion: 1, justification: 'Emergency WAF rule applied.' });
+
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBe('INVALID_STATE_TRANSITION');
+    });
+
+    it('maps non-admin access denial to HTTP 403', async () => {
+      vi.mocked(mockServices.findingService.forceCloseFinding).mockRejectedValue(
+        new ForbiddenError('Only Global Admins may force-close findings', 'FORBIDDEN')
+      );
+      const app = createTestApp({ services: mockServices, actor: analystActor });
+
+      const res = await request(app)
+        .post(`/api/v1/findings/${sampleFinding.id}/force-close`)
+        .send({ expectedVersion: 1, justification: 'Emergency WAF rule applied.' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('FORBIDDEN');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 12. POST /api/v1/findings/:id/force-reopen
+  // ---------------------------------------------------------------------------
+  describe('POST /api/v1/findings/:id/force-reopen', () => {
+    it('forces reopen finding and returns HTTP 200 with reopened finding', async () => {
+      const reopenedFinding: FindingEntity = {
+        ...sampleFinding,
+        status: 'REOPENED',
+        version: 3,
+      };
+      vi.mocked(mockServices.findingService.forceReopenFinding).mockResolvedValue(reopenedFinding);
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      const res = await request(app)
+        .post(`/api/v1/findings/${sampleFinding.id}/force-reopen`)
+        .send({
+          expectedVersion: 2,
+          justification: 'WAF bypass discovered; vulnerability persists in origin service.',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.id).toBe(sampleFinding.id);
+      expect(res.body.data.status).toBe('REOPENED');
+      expect(res.body.data.version).toBe(3);
+      expect(mockServices.findingService.forceReopenFinding).toHaveBeenCalledWith(
+        adminActor,
+        sampleFinding.id,
+        {
+          expectedVersion: 2,
+          justification: 'WAF bypass discovered; vulnerability persists in origin service.',
+        }
+      );
+    });
+
+    it('rejects force-reopen without justification with HTTP 400', async () => {
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      const res = await request(app)
+        .post(`/api/v1/findings/${sampleFinding.id}/force-reopen`)
+        .send({ expectedVersion: 2 });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      expect(mockServices.findingService.forceReopenFinding).not.toHaveBeenCalled();
+    });
+
+    it('rejects force-reopen with empty or whitespace-only justification (spaces, tabs, newlines) with HTTP 400', async () => {
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      for (const invalidJustification of ['', '   ', '\t\t', '\n\r\n', ' \t \n \r ']) {
+        const res = await request(app)
+          .post(`/api/v1/findings/${sampleFinding.id}/force-reopen`)
+          .send({ expectedVersion: 2, justification: invalidJustification });
+
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      }
+      expect(mockServices.findingService.forceReopenFinding).not.toHaveBeenCalled();
+    });
+
+    it('rejects force-reopen with justification exceeding 5000 characters with HTTP 400', async () => {
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      const res = await request(app)
+        .post(`/api/v1/findings/${sampleFinding.id}/force-reopen`)
+        .send({ expectedVersion: 2, justification: 'x'.repeat(5001) });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      expect(mockServices.findingService.forceReopenFinding).not.toHaveBeenCalled();
+    });
+
+    it('rejects force-reopen with invalid expectedVersion with HTTP 400', async () => {
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      const res = await request(app)
+        .post(`/api/v1/findings/${sampleFinding.id}/force-reopen`)
+        .send({ expectedVersion: -1, justification: 'Vulnerability re-emerged.' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      expect(mockServices.findingService.forceReopenFinding).not.toHaveBeenCalled();
+    });
+
+    it('rejects force-reopen with invalid finding UUID param with HTTP 400', async () => {
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      const res = await request(app)
+        .post('/api/v1/findings/invalid-uuid/force-reopen')
+        .send({ expectedVersion: 2, justification: 'Vulnerability re-emerged.' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      expect(mockServices.findingService.forceReopenFinding).not.toHaveBeenCalled();
+    });
+
+    it('maps force-reopen OCC conflict to HTTP 409', async () => {
+      vi.mocked(mockServices.findingService.forceReopenFinding).mockRejectedValue(
+        new ConcurrencyConflictError('Finding version mismatch', 'CONCURRENCY_CONFLICT')
+      );
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      const res = await request(app)
+        .post(`/api/v1/findings/${sampleFinding.id}/force-reopen`)
+        .send({ expectedVersion: 2, justification: 'Vulnerability re-emerged.' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error.code).toBe('CONCURRENCY_CONFLICT');
+    });
+
+    it('maps force-reopen invalid state transition to HTTP 422', async () => {
+      vi.mocked(mockServices.findingService.forceReopenFinding).mockRejectedValue(
+        new InvalidStateTransitionError('Finding must be in CLOSED state for force-reopen', 'INVALID_STATE_TRANSITION')
+      );
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+
+      const res = await request(app)
+        .post(`/api/v1/findings/${sampleFinding.id}/force-reopen`)
+        .send({ expectedVersion: 2, justification: 'Vulnerability re-emerged.' });
+
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBe('INVALID_STATE_TRANSITION');
+    });
+
+    it('maps non-admin access denial to HTTP 403', async () => {
+      vi.mocked(mockServices.findingService.forceReopenFinding).mockRejectedValue(
+        new ForbiddenError('Only Global Admins may force-reopen findings', 'FORBIDDEN')
+      );
+      const app = createTestApp({ services: mockServices, actor: devActor });
+
+      const res = await request(app)
+        .post(`/api/v1/findings/${sampleFinding.id}/force-reopen`)
+        .send({ expectedVersion: 2, justification: 'Vulnerability re-emerged.' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('FORBIDDEN');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 13. Security & Authentication Boundaries
   // ---------------------------------------------------------------------------
   describe('Production Authentication & Actor Injection', () => {
     it('production createApp rejects requests with HTTP 401 UNAUTHORIZED (fail-closed)', async () => {

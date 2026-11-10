@@ -47,12 +47,16 @@ export function createMockTaskService(): ITaskService {
   };
 }
 
+export function createMockAuditService(): IAuditService {
+  return {
+    queryAuditLogs: vi.fn(),
+  };
+}
+
 export function createMockDomainServices(overrides?: Partial<DomainServices>): DomainServices {
   return {
     projectService: createMockProjectService(),
-    auditService: {
-      queryAuditLogs: vi.fn(),
-    } as unknown as IAuditService,
+    auditService: createMockAuditService(),
     findingService: createMockFindingService(),
     taskService: createMockTaskService(),
     close: vi.fn().mockResolvedValue(undefined),
