@@ -174,6 +174,41 @@ export const ListFindingsFilterInputSchema = z
 export type ListFindingsFilterInput = z.infer<typeof ListFindingsFilterInputSchema>;
 
 /**
+ * Query schema for listing findings with pagination, search, and attribute filters.
+ * Parses and validates HTTP query string parameters:
+ * - String numbers for page and limit are converted to positive integers.
+ * - Boolean string representations are strictly parsed ('true' -> true, 'false' -> false).
+ * - Enforces bounded limits (max 100) and max 200 characters for search.
+ */
+export const ListFindingsQuerySchema = z
+  .object({
+    projectId: UuidSchema.optional(),
+    status: FindingStatusSchema.optional(),
+    severity: FindingSeveritySchema.optional(),
+    category: FindingCategorySchema.optional(),
+    assignedToId: UuidSchema.optional(),
+    search: z.string().trim().max(200, 'Search query cannot exceed 200 characters').optional(),
+    page: z
+      .preprocess((val) => (val !== undefined && val !== '' ? Number(val) : 1), z.number().int('Page must be an integer').min(1, 'Page must be at least 1'))
+      .default(1),
+    limit: z
+      .preprocess(
+        (val) => (val !== undefined && val !== '' ? Number(val) : 25),
+        z.number().int('Limit must be an integer').min(1, 'Limit must be at least 1').max(100, 'Limit cannot exceed 100'),
+      )
+      .default(25),
+    includeDeleted: z
+      .preprocess((val) => {
+        if (val === undefined || val === '') return undefined;
+        if (val === 'true' || val === true) return true;
+        if (val === 'false' || val === false) return false;
+        return val;
+      }, z.boolean({ message: 'includeDeleted must be a boolean (true or false)' }).optional()),
+  })
+  .strict();
+export type ListFindingsQuery = z.infer<typeof ListFindingsQuerySchema>;
+
+/**
  * Input DTO for Soft-Deleting a Finding.
  */
 export const SoftDeleteFindingInputSchema = z

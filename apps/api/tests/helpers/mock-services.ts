@@ -20,15 +20,41 @@ export function createMockProjectService(): IProjectService {
   };
 }
 
+export function createMockFindingService(): IFindingService {
+  return {
+    createFinding: vi.fn(),
+    getFinding: vi.fn(),
+    listFindings: vi.fn(),
+    triageFinding: vi.fn(),
+    assignFinding: vi.fn(),
+    submitRemediation: vi.fn(),
+    verifyFinding: vi.fn(),
+    confirmVerification: vi.fn(),
+    rejectVerification: vi.fn(),
+    closeFinding: vi.fn(),
+    forceCloseFinding: vi.fn(),
+    forceReopenFinding: vi.fn(),
+    updateFindingMetadata: vi.fn(),
+    softDeleteFinding: vi.fn(),
+  };
+}
+
+export function createMockTaskService(): ITaskService {
+  return {
+    getTask: vi.fn(),
+    getTaskByFindingId: vi.fn(),
+    updateTaskNotes: vi.fn(),
+  };
+}
+
 export function createMockDomainServices(overrides?: Partial<DomainServices>): DomainServices {
   return {
     projectService: createMockProjectService(),
     auditService: {
-      logEvent: vi.fn(),
-      queryEvents: vi.fn(),
+      queryAuditLogs: vi.fn(),
     } as unknown as IAuditService,
-    findingService: {} as unknown as IFindingService,
-    taskService: {} as unknown as ITaskService,
+    findingService: createMockFindingService(),
+    taskService: createMockTaskService(),
     close: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };

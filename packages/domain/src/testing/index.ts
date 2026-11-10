@@ -293,36 +293,40 @@ export async function createTestDatabaseClient(connectionString: string): Promis
       await client.query('BEGIN');
       try {
         // Clean up in reverse foreign-key dependency order with strict WHERE filters:
-        // 1. Dependent remediation tasks (if any exist for findings in this project)
+        // 1. Audit events associated with this project, its member additions/removals, its findings, or its remediation tasks
         await client.query(
-          `DELETE FROM remediation_tasks WHERE finding_id IN (SELECT id FROM findings WHERE project_id = $1);`,
+          `DELETE FROM audit_events
+           WHERE resource_id = $1::uuid
+              OR (resource_type = 'ProjectMember' AND ((before_state->>'projectId') = $1::text OR (after_state->>'projectId') = $1::text))
+              OR resource_id IN (SELECT id FROM findings WHERE project_id = $1)
+              OR resource_id IN (SELECT id FROM remediation_tasks WHERE finding_id IN (SELECT id FROM findings WHERE project_id = $1));`,
           [projectId],
         );
         if (options?.injectFailureAfterStep === 1) {
           throw new Error('INJECTED_CLEANUP_FAILURE_AFTER_STEP_1');
         }
 
-        // 2. Dependent finding events (if any exist for findings in this project)
+        // 2. Dependent remediation tasks (if any exist for findings in this project)
         await client.query(
-          `DELETE FROM finding_events WHERE finding_id IN (SELECT id FROM findings WHERE project_id = $1);`,
+          `DELETE FROM remediation_tasks WHERE finding_id IN (SELECT id FROM findings WHERE project_id = $1);`,
           [projectId],
         );
         if (options?.injectFailureAfterStep === 2) {
           throw new Error('INJECTED_CLEANUP_FAILURE_AFTER_STEP_2');
         }
 
-        // 3. Dependent findings (if any exist in this project)
+        // 3. Dependent finding events (if any exist for findings in this project)
         await client.query(
-          `DELETE FROM findings WHERE project_id = $1;`,
+          `DELETE FROM finding_events WHERE finding_id IN (SELECT id FROM findings WHERE project_id = $1);`,
           [projectId],
         );
         if (options?.injectFailureAfterStep === 3) {
           throw new Error('INJECTED_CLEANUP_FAILURE_AFTER_STEP_3');
         }
 
-        // 4. Audit events associated with this project or its member additions/removals
+        // 4. Dependent findings (if any exist in this project)
         await client.query(
-          `DELETE FROM audit_events WHERE resource_id = $1::uuid OR (resource_type = 'ProjectMember' AND ((before_state->>'projectId') = $1::text OR (after_state->>'projectId') = $1::text));`,
+          `DELETE FROM findings WHERE project_id = $1;`,
           [projectId],
         );
         if (options?.injectFailureAfterStep === 4) {
