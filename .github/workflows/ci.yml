@@ -25,6 +25,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install pnpm
@@ -43,6 +44,15 @@ jobs:
 
       - name: Validate Docker Compose Configuration
         run: pnpm run db:validate
+
+      - name: Gitleaks Git History Secret Scan
+        run: pnpm run security:gitleaks:git
+
+      - name: Gitleaks Directory Content Secret Scan
+        run: pnpm run security:gitleaks:dir
+
+      - name: Automated Secret & Credential Scan
+        run: pnpm run security:scan-secrets
 
       - name: Generate Prisma ORM 7 Client
         run: pnpm run prisma:generate

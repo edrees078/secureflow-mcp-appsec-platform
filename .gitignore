@@ -10,12 +10,21 @@ pnpm-debug.log*
 .env
 .env.local
 .env.*.local
+.env.development
+.env.test
+.env.production
+.env.staging
 !.env.example
+!apps/api/.env.example
 *.pem
 *.key
 *.cert
 *.pfx
 *.p12
+*.jks
+*.keystore
+*.kdbx
+.gitleaks-report.json
 
 # Build Outputs
 dist/

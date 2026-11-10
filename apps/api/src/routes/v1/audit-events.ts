@@ -40,13 +40,48 @@ const SENSITIVE_AUDIT_STATE_KEYS: ReadonlySet<string> = new Set([
   'credentials',
 ]);
 
-const MAX_REDACTION_DEPTH = 10;
+export const MAX_REDACTION_DEPTH = 10;
 
-function sanitizeAuditStateValue(value: unknown, depth = 0): unknown {
-  if (value === null || value === undefined) {
-    return value;
+const EMBEDDED_CREDENTIAL_PATTERNS: ReadonlyArray<{
+  regex: RegExp;
+  replacement: string;
+}> = [
+  {
+    regex: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----|$)/g,
+    replacement: '[REDACTED]',
+  },
+  {
+    regex: /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi,
+    replacement: 'Bearer [REDACTED]',
+  },
+  {
+    regex: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+    replacement: '[REDACTED]',
+  },
+  {
+    regex: /\beyJ[A-Za-z0-9_-]{15,}\b/g,
+    replacement: '[REDACTED]',
+  },
+  {
+    regex: /postgres(?:ql)?:\/\/[^:\s'"`]+:[^@\s'"`]+@[^\s'"`]+/gi,
+    replacement: 'postgresql://[REDACTED]',
+  },
+  {
+    regex: /\b(?:(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|(?:AKIA|ASIA)[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|xox[baprs]-[0-9A-Za-z-]{10,}|sk_live_[0-9A-Za-z]{16,}|sk-(?:proj|ant)-[A-Za-z0-9_-]{16,})\b/g,
+    replacement: '[REDACTED]',
+  },
+];
+
+export function sanitizeStringCredentialPatterns(text: string): string {
+  let result = text;
+  for (const { regex, replacement } of EMBEDDED_CREDENTIAL_PATTERNS) {
+    result = result.replace(regex, replacement);
   }
-  if (typeof value !== 'object') {
+  return result;
+}
+
+export function sanitizeAuditStateValue(value: unknown, depth = 0): unknown {
+  if (value === null || value === undefined) {
     return value;
   }
   if (value instanceof Date) {
@@ -54,6 +89,12 @@ function sanitizeAuditStateValue(value: unknown, depth = 0): unknown {
   }
   if (depth >= MAX_REDACTION_DEPTH) {
     return '[MAX_DEPTH_EXCEEDED]';
+  }
+  if (typeof value === 'string') {
+    return sanitizeStringCredentialPatterns(value);
+  }
+  if (typeof value !== 'object') {
+    return value;
   }
   if (Array.isArray(value)) {
     return value.map((item) => sanitizeAuditStateValue(item, depth + 1));

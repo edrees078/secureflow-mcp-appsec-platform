@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import pino from 'pino';
-import { SENSITIVE_REDACTION_PATHS } from '../src/logger/logger.js';
+import { createLogger } from '../src/logger/logger.js';
 
 describe('Pino Sensitive Data Redaction', () => {
   it('redacts sensitive headers, tokens, passwords, and cookies from log output', async () => {
@@ -11,16 +10,7 @@ describe('Pino Sensitive Data Redaction', () => {
       },
     };
 
-    const testLogger = pino(
-      {
-        level: 'info',
-        redact: {
-          paths: SENSITIVE_REDACTION_PATHS,
-          censor: '[REDACTED]',
-        },
-      },
-      destination
-    );
+    const testLogger = createLogger('info', destination);
 
     // Log payload with sensitive credentials and tokens
     testLogger.info({
@@ -39,6 +29,12 @@ describe('Pino Sensitive Data Redaction', () => {
         email: 'developer@secureflow.local',
         password: 'SuperSecretPassword123!',
         token: 'raw-access-token',
+        accessToken: 'synthetic-access-token-value',
+        refreshToken: 'synthetic-refresh-token-value',
+        sessionSecret: 'synthetic-session-secret-value',
+        clientSecret: 'synthetic-client-secret-value',
+        databaseUrl: 'postgresql://user:pass@localhost:5433/db',
+        connectionString: 'postgresql://user:pass@localhost:5433/db2',
         secret: 'api-client-secret-xyz',
       },
     });
@@ -62,6 +58,18 @@ describe('Pino Sensitive Data Redaction', () => {
     expect(loggedData).not.toContain('SuperSecretPassword123!');
     expect(parsedLog.user.token).toBe('[REDACTED]');
     expect(loggedData).not.toContain('raw-access-token');
+    expect(parsedLog.user.accessToken).toBe('[REDACTED]');
+    expect(loggedData).not.toContain('synthetic-access-token-value');
+    expect(parsedLog.user.refreshToken).toBe('[REDACTED]');
+    expect(loggedData).not.toContain('synthetic-refresh-token-value');
+    expect(parsedLog.user.sessionSecret).toBe('[REDACTED]');
+    expect(loggedData).not.toContain('synthetic-session-secret-value');
+    expect(parsedLog.user.clientSecret).toBe('[REDACTED]');
+    expect(loggedData).not.toContain('synthetic-client-secret-value');
+    expect(parsedLog.user.databaseUrl).toBe('[REDACTED]');
+    expect(loggedData).not.toContain('postgresql://user:pass@localhost:5433/db');
+    expect(parsedLog.user.connectionString).toBe('[REDACTED]');
+    expect(loggedData).not.toContain('postgresql://user:pass@localhost:5433/db2');
     expect(parsedLog.user.secret).toBe('[REDACTED]');
     expect(loggedData).not.toContain('api-client-secret-xyz');
 
@@ -69,5 +77,72 @@ describe('Pino Sensitive Data Redaction', () => {
     expect(parsedLog.req.method).toBe('POST');
     expect(parsedLog.req.headers['content-type']).toBe('application/json');
     expect(parsedLog.user.id).toBe('user-uuid-1');
+  });
+
+  it('redacts arrays, case/separator variations, embedded credentials in nonsensitive fields, and structures beyond MAX_REDACTION_DEPTH without mutating inputs', () => {
+    let loggedData = '';
+    const destination = {
+      write(chunk: string) {
+        loggedData += chunk;
+      },
+    };
+
+    const testLogger = createLogger('info', destination);
+
+    // Construct a 12-level nested structure containing a secret beyond depth 10
+    let deepNode: Record<string, unknown> = {
+      hiddenDeepSecret: 'deep-unredacted-value-must-never-appear',
+      password: 'deep-password-must-never-appear',
+    };
+    for (let d = 11; d >= 1; d--) {
+      deepNode = { [`level_${d}`]: deepNode };
+    }
+
+    const originalPayload = {
+      PASSWORD: 'root-uppercase-password',
+      Access_Token: 'root-snake-access-token',
+      'session-secret': 'root-kebab-session-secret',
+      items: [
+        {
+          CLIENT_SECRET: 'array-client-secret-value',
+          'database-url': 'postgresql://user:pass@localhost:5433/db_array',
+          forensicNote: 'Preserved array forensic note',
+        },
+      ],
+      notes:
+        'Attempted connection to postgresql://user:pass@localhost:5433/db using Bearer synth_bearer_value_123',
+      forensicStatus: 'VERIFIED',
+      deepTree: deepNode,
+    };
+
+    testLogger.info(originalPayload);
+
+    const parsedLog = JSON.parse(loggedData);
+
+    // Case and separator variations redacted
+    expect(parsedLog.PASSWORD).toBe('[REDACTED]');
+    expect(parsedLog.Access_Token).toBe('[REDACTED]');
+    expect(parsedLog['session-secret']).toBe('[REDACTED]');
+    expect(parsedLog.items[0].CLIENT_SECRET).toBe('[REDACTED]');
+    expect(parsedLog.items[0]['database-url']).toBe('[REDACTED]');
+
+    // Embedded credential strings inside nonsensitive 'notes' field redacted
+    expect(parsedLog.notes).toContain('postgresql://[REDACTED]');
+    expect(parsedLog.notes).toContain('Bearer [REDACTED]');
+    expect(loggedData).not.toContain('synth_bearer_value_123');
+    expect(loggedData).not.toContain('postgresql://user:pass@localhost:5433/db');
+
+    // Deep nesting beyond MAX_REDACTION_DEPTH = 10 replaced with [MAX_DEPTH_EXCEEDED]
+    expect(loggedData).not.toContain('deep-unredacted-value-must-never-appear');
+    expect(loggedData).not.toContain('deep-password-must-never-appear');
+    expect(loggedData).toContain('[MAX_DEPTH_EXCEEDED]');
+
+    // Legitimate forensic fields preserved
+    expect(parsedLog.forensicStatus).toBe('VERIFIED');
+    expect(parsedLog.items[0].forensicNote).toBe('Preserved array forensic note');
+
+    // Original input object in memory not mutated
+    expect(originalPayload.PASSWORD).toBe('root-uppercase-password');
+    expect(originalPayload.items[0]?.CLIENT_SECRET).toBe('array-client-secret-value');
   });
 });

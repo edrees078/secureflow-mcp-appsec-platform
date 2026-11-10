@@ -386,6 +386,144 @@ describe('Audit Event REST API Controller (/api/v1/audit-events)', () => {
       // Original object in memory not mutated
       expect(originalAfterState.password).toBe('super_secret_password');
     });
+
+    it('redacts case variations and nested arrays of sensitive fields in beforeState and afterState without mutating source objects', async () => {
+      const originalBeforeState = {
+        status: 'OPEN',
+        PASSWORD: 'uppercase_password_value',
+        Access_Token: 'snake_case_access_token_value',
+        'Session-Secret': 'kebab_case_session_secret_value',
+        items: [
+          {
+            CLIENT_SECRET: 'array_nested_client_secret',
+            Database_Url: 'postgresql://user:pass@localhost:5433/db_array',
+            notes: 'Preserved array forensic item',
+          },
+        ],
+      };
+
+      const originalAfterState = {
+        status: 'CLOSED',
+        snapshots: [
+          {
+            accessToken: 'nested_array_access_token_fixture',
+            sessionSecret: 'nested_array_session_secret_fixture',
+            justification: 'Verified remediation snapshot',
+          },
+        ],
+      };
+
+      const eventWithComplexSensitiveState: AuditEventEntity = {
+        ...sampleAuditEvent,
+        beforeState: originalBeforeState,
+        afterState: originalAfterState,
+      };
+
+      vi.mocked(mockServices.auditService.queryAuditLogs).mockResolvedValue({
+        items: [eventWithComplexSensitiveState],
+        total: 1,
+        page: 1,
+        limit: 25,
+        totalPages: 1,
+      });
+
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+      const res = await request(app).get('/api/v1/audit-events');
+
+      expect(res.status).toBe(200);
+      const item = res.body.data[0];
+
+      // Case variations and nested array entries redacted
+      expect(item.beforeState.PASSWORD).toBe('[REDACTED]');
+      expect(item.beforeState.Access_Token).toBe('[REDACTED]');
+      expect(item.beforeState['Session-Secret']).toBe('[REDACTED]');
+      expect(item.beforeState.items[0].CLIENT_SECRET).toBe('[REDACTED]');
+      expect(item.beforeState.items[0].Database_Url).toBe('[REDACTED]');
+      expect(item.afterState.snapshots[0].accessToken).toBe('[REDACTED]');
+      expect(item.afterState.snapshots[0].sessionSecret).toBe('[REDACTED]');
+
+      // Forensic metadata inside objects and arrays preserved
+      expect(item.beforeState.status).toBe('OPEN');
+      expect(item.beforeState.items[0].notes).toBe('Preserved array forensic item');
+      expect(item.afterState.status).toBe('CLOSED');
+      expect(item.afterState.snapshots[0].justification).toBe(
+        'Verified remediation snapshot',
+      );
+
+      // Original source objects and nested arrays in memory not mutated
+      expect(originalBeforeState.PASSWORD).toBe('uppercase_password_value');
+      expect(originalBeforeState.items[0]?.CLIENT_SECRET).toBe(
+        'array_nested_client_secret',
+      );
+      expect(originalAfterState.snapshots[0]?.accessToken).toBe(
+        'nested_array_access_token_fixture',
+      );
+    });
+
+    it('replaces nested structures at MAX_REDACTION_DEPTH (10) with [MAX_DEPTH_EXCEEDED] and redacts credential-looking content inside nonsensitive field names', async () => {
+      // Build an 11-level nested structure where secrets exist at depth >= 10
+      let deepTree: Record<string, unknown> = {
+        deepSecretField: 'unredacted_deep_value_must_never_leak',
+        password: 'deep_password_must_never_leak',
+      };
+      for (let level = 10; level >= 1; level--) {
+        deepTree = { [`level_${level}`]: deepTree };
+      }
+
+      const originalBeforeState = {
+        status: 'IN_PROGRESS',
+        notes:
+          'Diagnostic trace connected to postgresql://user:pass@localhost:5433/db with header Bearer synthetic_bearer_credential_abc',
+        deepContext: deepTree,
+      };
+
+      const originalAfterState = {
+        status: 'VERIFIED',
+        justification: 'Normal forensic justification text preserved intact.',
+      };
+
+      const eventWithDeepAndEmbeddedData: AuditEventEntity = {
+        ...sampleAuditEvent,
+        beforeState: originalBeforeState,
+        afterState: originalAfterState,
+      };
+
+      vi.mocked(mockServices.auditService.queryAuditLogs).mockResolvedValue({
+        items: [eventWithDeepAndEmbeddedData],
+        total: 1,
+        page: 1,
+        limit: 25,
+        totalPages: 1,
+      });
+
+      const app = createTestApp({ services: mockServices, actor: adminActor });
+      const res = await request(app).get('/api/v1/audit-events');
+
+      expect(res.status).toBe(200);
+      const item = res.body.data[0];
+      const serializedJson = JSON.stringify(item);
+
+      // 1. Structures at MAX_REDACTION_DEPTH = 10 are replaced with [MAX_DEPTH_EXCEEDED]
+      expect(serializedJson).toContain('[MAX_DEPTH_EXCEEDED]');
+      expect(serializedJson).not.toContain('unredacted_deep_value_must_never_leak');
+      expect(serializedJson).not.toContain('deep_password_must_never_leak');
+
+      // 2. Credential-looking content inside nonsensitive 'notes' field is redacted
+      expect(item.beforeState.notes).toContain('postgresql://[REDACTED]');
+      expect(item.beforeState.notes).toContain('Bearer [REDACTED]');
+      expect(serializedJson).not.toContain('synthetic_bearer_credential_abc');
+      expect(serializedJson).not.toContain('postgresql://user:pass@localhost:5433/db');
+
+      // 3. Legitimate forensic evidence is preserved
+      expect(item.beforeState.status).toBe('IN_PROGRESS');
+      expect(item.afterState.status).toBe('VERIFIED');
+      expect(item.afterState.justification).toBe(
+        'Normal forensic justification text preserved intact.',
+      );
+
+      // 4. Original objects in memory are not mutated
+      expect(originalBeforeState.notes).toContain('synthetic_bearer_credential_abc');
+    });
   });
 
   // ---------------------------------------------------------------------------

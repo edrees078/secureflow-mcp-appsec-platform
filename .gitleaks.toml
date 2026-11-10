@@ -1,0 +1,19 @@
+title = "SecureFlow Secret Scanning Configuration"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+description = "Extend default generic-api-key rule with match-specific allowlist for synthetic RFC 7519 header fixture"
+
+  [[rules.allowlists]]
+  description = "Allowlist only the verified 36-char synthetic RFC 7519 RS256 header fixture in audit-controller.test.ts"
+  condition = "AND"
+  paths = [
+    '''(^|[/\\])apps[/\\]api[/\\]tests[/\\]unit[/\\]audit-controller\.test\.ts$''',
+  ]
+  regexTarget = "line"
+  regexes = [
+    '''^\s*accessToken:\s*'[e][y][J]hbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9',\s*$''',
+  ]
