@@ -145,4 +145,71 @@ describe('Pino Sensitive Data Redaction', () => {
     expect(originalPayload.PASSWORD).toBe('root-uppercase-password');
     expect(originalPayload.items[0]?.CLIENT_SECRET).toBe('array-client-secret-value');
   });
+
+  it('redacts Gate 4B.2 OIDC, PKCE, session, and anti-CSRF credentials in structured fields, headers, and error messages', () => {
+    let loggedData = '';
+    const destination = {
+      write(chunk: string) {
+        loggedData += chunk;
+      },
+    };
+
+    const testLogger = createLogger('info', destination);
+
+    testLogger.error({
+      req: {
+        headers: {
+          cookie: '__Host-sf_session=synth-session-cookie-secret; __Host-sf_oidc_txn=synth-txn-cookie',
+          'x-csrf-token': 'synth-csrf-header-value',
+        },
+      },
+      authContext: {
+        csrfToken: 'synth-csrf-field-value',
+        codeVerifier: 'synth-pkce-verifier-value',
+        pkceCodeVerifier: 'synth-pkce-code-verifier-2',
+        authorizationCode: 'synth-auth-code-value',
+        sessionId: 'synth-session-id-value',
+        sessionToken: 'synth-session-token-value',
+        rawSessionToken: 'synth-raw-session-token',
+        rawTxnToken: 'synth-raw-txn-token',
+        idToken: 'synth-id-token-value',
+      },
+      err: new Error(
+        'Exchange failed with code_verifier=synth-url-verifier and client_secret=synth-url-secret and __Host-sf_session=synth-url-cookie',
+      ),
+    });
+
+    const parsed = JSON.parse(loggedData);
+    expect(parsed.req.headers.cookie).toBe('[REDACTED]');
+    expect(parsed.req.headers['x-csrf-token']).toBe('[REDACTED]');
+    expect(parsed.authContext.csrfToken).toBe('[REDACTED]');
+    expect(parsed.authContext.codeVerifier).toBe('[REDACTED]');
+    expect(parsed.authContext.pkceCodeVerifier).toBe('[REDACTED]');
+    expect(parsed.authContext.authorizationCode).toBe('[REDACTED]');
+    expect(parsed.authContext.sessionId).toBe('[REDACTED]');
+    expect(parsed.authContext.sessionToken).toBe('[REDACTED]');
+    expect(parsed.authContext.rawSessionToken).toBe('[REDACTED]');
+    expect(parsed.authContext.rawTxnToken).toBe('[REDACTED]');
+    expect(parsed.authContext.idToken).toBe('[REDACTED]');
+
+    for (const leaked of [
+      'synth-session-cookie-secret',
+      'synth-txn-cookie',
+      'synth-csrf-header-value',
+      'synth-csrf-field-value',
+      'synth-pkce-verifier-value',
+      'synth-pkce-code-verifier-2',
+      'synth-auth-code-value',
+      'synth-session-id-value',
+      'synth-session-token-value',
+      'synth-raw-session-token',
+      'synth-raw-txn-token',
+      'synth-id-token-value',
+      'synth-url-verifier',
+      'synth-url-secret',
+      'synth-url-cookie',
+    ]) {
+      expect(loggedData).not.toContain(leaked);
+    }
+  });
 });

@@ -155,4 +155,51 @@ describe('Production Fail-Closed Authentication Boundary (/api/v1)', () => {
     expect(res.body.error.code).toBe('UNAUTHORIZED');
     expect(mockServices.projectService.listProjects).not.toHaveBeenCalled();
   });
+
+  it('unconditionally rejects unauthenticated requests across all 23 protected operational endpoints', async () => {
+    const endpoints: ReadonlyArray<{ readonly method: 'get' | 'post' | 'patch' | 'delete'; readonly path: string }> = [
+      { method: 'get', path: '/api/v1/projects' },
+      { method: 'post', path: '/api/v1/projects' },
+      { method: 'get', path: '/api/v1/projects/00000000-0000-0000-0000-000000000001' },
+      { method: 'patch', path: '/api/v1/projects/00000000-0000-0000-0000-000000000001' },
+      { method: 'delete', path: '/api/v1/projects/00000000-0000-0000-0000-000000000001' },
+      { method: 'get', path: '/api/v1/projects/00000000-0000-0000-0000-000000000001/members' },
+      { method: 'post', path: '/api/v1/projects/00000000-0000-0000-0000-000000000001/members' },
+      { method: 'delete', path: '/api/v1/projects/00000000-0000-0000-0000-000000000001/members/00000000-0000-0000-0000-000000000002' },
+      { method: 'get', path: '/api/v1/findings' },
+      { method: 'post', path: '/api/v1/findings' },
+      { method: 'get', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001' },
+      { method: 'patch', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001' },
+      { method: 'delete', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001' },
+      { method: 'post', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001/triage' },
+      { method: 'post', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001/assign' },
+      { method: 'post', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001/submit' },
+      { method: 'post', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001/verify' },
+      { method: 'post', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001/close' },
+      { method: 'post', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001/force-close' },
+      { method: 'post', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001/force-reopen' },
+      { method: 'get', path: '/api/v1/tasks/00000000-0000-0000-0000-000000000001' },
+      { method: 'patch', path: '/api/v1/tasks/00000000-0000-0000-0000-000000000001/notes' },
+      { method: 'get', path: '/api/v1/audit-events' },
+    ];
+
+    expect(endpoints).toHaveLength(23);
+
+    for (const ep of endpoints) {
+      const res = await request(app)[ep.method](ep.path);
+      expect(res.status).toBe(401);
+      expect(res.body).toEqual({
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required to access this resource',
+        },
+      });
+    }
+
+    expect(mockServices.projectService.listProjects).not.toHaveBeenCalled();
+    expect(mockServices.projectService.createProject).not.toHaveBeenCalled();
+    expect(mockServices.findingService.listFindings).not.toHaveBeenCalled();
+    expect(mockServices.taskService.getTask).not.toHaveBeenCalled();
+    expect(mockServices.auditService.queryAuditLogs).not.toHaveBeenCalled();
+  });
 });

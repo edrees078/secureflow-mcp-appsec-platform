@@ -5,6 +5,8 @@ declare global {
     interface Request {
       id?: string;
       actor?: ActorContext;
+      sessionId?: string;
+      sessionCsrfToken?: string;
       validated?: {
         body?: unknown;
         query?: unknown;
