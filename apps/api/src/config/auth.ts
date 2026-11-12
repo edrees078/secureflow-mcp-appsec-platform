@@ -15,6 +15,8 @@ export interface OidcProtocolConfig {
   readonly clientAuthMethod: OidcClientAuthMethod;
   readonly redirectUri: string;
   readonly allowedRedirectUris: readonly string[];
+  readonly postLogoutRedirectUri: string;
+  readonly allowedPostLogoutRedirectUris: readonly string[];
   readonly scopes: string;
   readonly clockToleranceSeconds: number;
   readonly allowInsecureHttp: boolean;
@@ -181,6 +183,8 @@ const RawAuthEnvSchema = z.object({
     .default('client_secret_basic'),
   OIDC_REDIRECT_URI: z.string().trim().optional(),
   OIDC_ALLOWED_REDIRECT_URIS: z.string().trim().optional(),
+  OIDC_POST_LOGOUT_REDIRECT_URI: z.string().trim().optional(),
+  OIDC_ALLOWED_POST_LOGOUT_REDIRECT_URIS: z.string().trim().optional(),
   OIDC_SCOPES: z.string().trim().optional(),
   OIDC_CLOCK_TOLERANCE_SECONDS: z
     .string()
@@ -215,6 +219,38 @@ const RawAuthEnvSchema = z.object({
     .pipe(z.number().int().min(30).max(900)),
   SESSION_COOKIE_SECURE: z.string().optional(),
 });
+
+function validateOidcUriList(
+  primaryUri: string,
+  extraCsv: string | undefined,
+  extraFieldName: string,
+  isProduction: boolean,
+  label: string,
+): readonly string[] {
+  const extraUris = (extraCsv ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((entry) => normalizeCanonicalHttpUrl(entry, extraFieldName));
+
+  const allowlist = Array.from(new Set([primaryUri, ...extraUris]));
+  for (const uri of allowlist) {
+    const parsedUri = new URL(uri);
+    if (isProduction) {
+      if (parsedUri.protocol !== 'https:') {
+        throw new DomainValidationError(
+          `All OIDC ${label} URIs must use https protocol in production`,
+        );
+      }
+      if (LOCALHOST_HOSTNAMES.has(parsedUri.hostname.toLowerCase())) {
+        throw new DomainValidationError(
+          `OIDC ${label} URIs must not target localhost or loopback addresses in production`,
+        );
+      }
+    }
+  }
+  return Object.freeze(allowlist);
+}
 
 /**
  * Validates OIDC, session lifecycle, cookie profile, and origin configuration cleanly
@@ -316,28 +352,13 @@ export function loadAuthConfig(
     throw new DomainValidationError('OIDC_REDIRECT_URI is required');
   }
   const primaryRedirectUri = normalizeCanonicalHttpUrl(raw.OIDC_REDIRECT_URI, 'OIDC_REDIRECT_URI');
-  const extraAllowedRedirects = (raw.OIDC_ALLOWED_REDIRECT_URIS ?? '')
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-    .map((entry) => normalizeCanonicalHttpUrl(entry, 'OIDC_ALLOWED_REDIRECT_URIS'));
-
-  const allowedRedirectUris = Array.from(new Set([primaryRedirectUri, ...extraAllowedRedirects]));
-  for (const uri of allowedRedirectUris) {
-    const parsedRedirect = new URL(uri);
-    if (isProduction) {
-      if (parsedRedirect.protocol !== 'https:') {
-        throw new DomainValidationError(
-          'All OIDC redirect URIs must use https protocol in production',
-        );
-      }
-      if (LOCALHOST_HOSTNAMES.has(parsedRedirect.hostname.toLowerCase())) {
-        throw new DomainValidationError(
-          'OIDC redirect URIs must not target localhost or loopback addresses in production',
-        );
-      }
-    }
-  }
+  const allowedRedirectUris = validateOidcUriList(
+    primaryRedirectUri,
+    raw.OIDC_ALLOWED_REDIRECT_URIS,
+    'OIDC_ALLOWED_REDIRECT_URIS',
+    isProduction,
+    'redirect',
+  );
 
   const scopesRaw = raw.OIDC_SCOPES && raw.OIDC_SCOPES.length > 0
     ? raw.OIDC_SCOPES
@@ -378,6 +399,18 @@ export function loadAuthConfig(
     }
   }
 
+  const primaryPostLogoutRedirectUri =
+    raw.OIDC_POST_LOGOUT_REDIRECT_URI && raw.OIDC_POST_LOGOUT_REDIRECT_URI.length > 0
+      ? normalizeCanonicalHttpUrl(raw.OIDC_POST_LOGOUT_REDIRECT_URI, 'OIDC_POST_LOGOUT_REDIRECT_URI')
+      : `${allowedOrigins[0]}/login`;
+  const allowedPostLogoutRedirectUris = validateOidcUriList(
+    primaryPostLogoutRedirectUri,
+    raw.OIDC_ALLOWED_POST_LOGOUT_REDIRECT_URIS,
+    'OIDC_ALLOWED_POST_LOGOUT_REDIRECT_URIS',
+    isProduction,
+    'post-logout redirect',
+  );
+
   return Object.freeze({
     mode: runtimeMode,
     authEnabled,
@@ -387,7 +420,9 @@ export function loadAuthConfig(
       clientSecret: raw.OIDC_CLIENT_SECRET,
       clientAuthMethod: raw.OIDC_CLIENT_AUTH_METHOD,
       redirectUri: primaryRedirectUri,
-      allowedRedirectUris: Object.freeze(allowedRedirectUris),
+      allowedRedirectUris,
+      postLogoutRedirectUri: primaryPostLogoutRedirectUri,
+      allowedPostLogoutRedirectUris,
       scopes: scopeTokens.join(' '),
       clockToleranceSeconds: raw.OIDC_CLOCK_TOLERANCE_SECONDS,
       allowInsecureHttp,

@@ -1,7 +1,7 @@
 # ==============================================================================
 # SecureFlow — Local Development Docker Compose Configuration
 # ==============================================================================
-# This configuration orchestrates the PostgreSQL database for local development.
+# This configuration orchestrates PostgreSQL and Keycloak for local development.
 #
 # IMPORTANT SAFETY & SECURITY POLICIES:
 # 1. Credentials:
@@ -10,8 +10,9 @@
 #    - The actual '.env' file is ignored by Git and must never be committed.
 #
 # 2. Network Isolation:
-#    - PostgreSQL is bound EXCLUSIVELY to '127.0.0.1' on the host interface.
-#    - It is NOT accessible from public or external network interfaces.
+#    - PostgreSQL is bound EXCLUSIVELY to '127.0.0.1' on host port 5433.
+#    - Keycloak is bound EXCLUSIVELY to '127.0.0.1' on host port 8080.
+#    - Neither is accessible from public or external network interfaces.
 #
 # 3. Data Durability & Prohibited Commands:
 #    - PostgreSQL data is persisted in the named volume 'postgres_data'.
@@ -48,6 +49,42 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    container_name: secureflow-keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER:?POSTGRES_USER must be set in .env}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:?KEYCLOAK_ADMIN_USER must be set in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD must be set in .env}
+      KC_HTTP_PORT: 8080
+      KC_HOSTNAME_STRICT: "false"
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "false"
+      JAVA_OPTS_APPEND: "-Dkeycloak.migration.replace-placeholders=true"
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?OIDC_CLIENT_SECRET must be set in .env}
+      KEYCLOAK_DEV_ADMIN_PASSWORD: ${KEYCLOAK_DEV_ADMIN_PASSWORD:?KEYCLOAK_DEV_ADMIN_PASSWORD must be set in .env}
+      KEYCLOAK_DEV_ANALYST_PASSWORD: ${KEYCLOAK_DEV_ANALYST_PASSWORD:?KEYCLOAK_DEV_ANALYST_PASSWORD must be set in .env}
+      KEYCLOAK_DEV_DEVELOPER_PASSWORD: ${KEYCLOAK_DEV_DEVELOPER_PASSWORD:?KEYCLOAK_DEV_DEVELOPER_PASSWORD must be set in .env}
+    ports:
+      # Bind exclusively to 127.0.0.1 (loopback) on port 8080
+      - "127.0.0.1:${KEYCLOAK_PORT:-8080}:8080"
+    volumes:
+      - ./infra/keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   # Persistent volume for PostgreSQL database storage

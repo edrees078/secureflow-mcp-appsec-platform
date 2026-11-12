@@ -24,7 +24,8 @@
     "start": "node dist/server.js",
     "test": "vitest run --exclude 'tests/integration/**'",
     "test:all": "vitest run",
-    "test:integration": "vitest run tests/integration --fileParallelism=false",
+    "test:integration": "vitest run tests/integration --exclude 'tests/integration/gate4b3-keycloak-bff.integration.test.ts' --fileParallelism=false",
+    "test:keycloak": "vitest run tests/integration/gate4b3-keycloak-bff.integration.test.ts",
     "test:watch": "vitest",
     "typecheck": "tsc -b"
   },

@@ -173,7 +173,7 @@ describe('Production Fail-Closed Authentication Boundary (/api/v1)', () => {
       { method: 'delete', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001' },
       { method: 'post', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001/triage' },
       { method: 'post', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001/assign' },
-      { method: 'post', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001/submit' },
+      { method: 'post', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001/submit-remediation' },
       { method: 'post', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001/verify' },
       { method: 'post', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001/close' },
       { method: 'post', path: '/api/v1/findings/00000000-0000-0000-0000-000000000001/force-close' },

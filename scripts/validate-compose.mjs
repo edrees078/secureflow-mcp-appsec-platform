@@ -66,6 +66,50 @@ const checks = [
     pass: /docker compose down -v/.test(content),
     details: 'Contains explicit documentation prohibiting destructive volume deletion',
   },
+  {
+    name: 'Service name: keycloak defined',
+    pass: /keycloak:\s*\n/.test(content),
+    details: 'Defines Keycloak IAM service container',
+  },
+  {
+    name: 'Keycloak Image: quay.io/keycloak/keycloak:26.8.2',
+    pass: /image:\s*quay\.io\/keycloak\/keycloak:26\.8\.2/.test(content),
+    details: 'Pins patched official Keycloak 26.8.2 container image',
+  },
+  {
+    name: 'Keycloak Admin: Required bootstrap env vars without fallback or deprecated aliases',
+    pass:
+      /KC_BOOTSTRAP_ADMIN_USERNAME:\s*\$\{KEYCLOAK_ADMIN_USER:\?/.test(content) &&
+      /KC_BOOTSTRAP_ADMIN_PASSWORD:\s*\$\{KEYCLOAK_ADMIN_PASSWORD:\?/.test(content) &&
+      !content.includes(':-admin') &&
+      !/^\s*KEYCLOAK_ADMIN(?:_PASSWORD)?:/m.test(content),
+    details: 'Requires KEYCLOAK_ADMIN_USER/KEYCLOAK_ADMIN_PASSWORD with no default fallback',
+  },
+  {
+    name: 'Keycloak Realm Env: Required client secret and dev synthetic passwords without hardcoded secrets',
+    pass:
+      /OIDC_CLIENT_SECRET:\s*\$\{OIDC_CLIENT_SECRET:\?/.test(content) &&
+      /KEYCLOAK_DEV_ADMIN_PASSWORD:\s*\$\{KEYCLOAK_DEV_ADMIN_PASSWORD:\?/.test(content) &&
+      /KEYCLOAK_DEV_ANALYST_PASSWORD:\s*\$\{KEYCLOAK_DEV_ANALYST_PASSWORD:\?/.test(content) &&
+      /KEYCLOAK_DEV_DEVELOPER_PASSWORD:\s*\$\{KEYCLOAK_DEV_DEVELOPER_PASSWORD:\?/.test(content) &&
+      /-Dkeycloak\.migration\.replace-placeholders=true/.test(content),
+    details: 'Passes required Keycloak client and dev user secret placeholders from .env',
+  },
+  {
+    name: 'Keycloak Container Name: secureflow-keycloak',
+    pass: /container_name:\s*secureflow-keycloak/.test(content),
+    details: 'Explicit container naming for Keycloak service',
+  },
+  {
+    name: 'Keycloak Network Isolation: 127.0.0.1:8080 loopback binding',
+    pass: /-\s*["']127\.0\.0\.1:\$\{KEYCLOAK_PORT:-8080\}:8080["']/.test(content),
+    details: 'Guarantees Keycloak binds to loopback interface on port 8080',
+  },
+  {
+    name: 'Keycloak Dependency: Depends on healthy postgres',
+    pass: /depends_on:\s*\n\s*postgres:\s*\n\s*condition:\s*service_healthy/.test(content),
+    details: 'Keycloak startup waits for postgres container to report healthy',
+  },
 ];
 
 let failed = 0;

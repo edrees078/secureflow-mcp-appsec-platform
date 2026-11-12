@@ -1,5 +1,6 @@
 import { createApp } from './app.js';
 import { env } from './config/env.js';
+import { loadAuthConfig } from './config/auth.js';
 import { logger } from './logger/logger.js';
 import { createDomainServices } from '@secureflow/domain';
 
@@ -8,7 +9,8 @@ const domainServices = createDomainServices({
   connectionString: env.DATABASE_URL,
 });
 
-const app = createApp(domainServices);
+const authConfig = env.AUTH_ENABLED ? loadAuthConfig(process.env) : undefined;
+const app = createApp(domainServices, authConfig ? { authConfig } : undefined);
 
 const server = app.listen(env.PORT, () => {
   logger.info(

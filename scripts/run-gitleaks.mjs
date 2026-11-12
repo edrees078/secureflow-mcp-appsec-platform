@@ -2,6 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import https from 'node:https';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -182,21 +183,68 @@ async function main() {
 
   if (mode === 'dir' || mode === 'all') {
     console.log('--- Running Gitleaks Directory Content Scan (gitleaks dir) ---');
-    const dirRes = runGitleaksSync(
-      binaryPath,
-      [
-        'dir',
-        '.',
-        '--config',
-        configPath,
-        '--redact',
-        '--no-banner',
-        '-v',
-        '--exit-code',
-        '1',
-      ],
-      { stdio: 'inherit' },
-    );
+    // Enumerate Git-scoped working-tree files (--cached --others --exclude-standard) so
+    // untracked non-ignored files are scanned while gitignored local secret files (e.g. .env)
+    // remain excluded from repository content scanning unless accidentally tracked.
+    let dirRes;
+    const isGitRepo = fs.existsSync(path.join(repoRoot, '.git'));
+    if (isGitRepo) {
+      const scopedRaw = execFileSync(
+        'git',
+        ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+        { cwd: repoRoot, encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 },
+      );
+      const scopedFiles = scopedRaw.split('\0').filter(Boolean);
+      const tmpScanRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-gitleaks-dir-'));
+      try {
+        for (const relPath of scopedFiles) {
+          const srcPath = path.join(repoRoot, relPath);
+          if (!fs.existsSync(srcPath)) {
+            continue;
+          }
+          const stat = fs.statSync(srcPath);
+          if (!stat.isFile()) {
+            continue;
+          }
+          const destPath = path.join(tmpScanRoot, relPath);
+          fs.mkdirSync(path.dirname(destPath), { recursive: true });
+          fs.copyFileSync(srcPath, destPath);
+        }
+        dirRes = runGitleaksSync(
+          binaryPath,
+          [
+            'dir',
+            '.',
+            '--config',
+            configPath,
+            '--redact',
+            '--no-banner',
+            '-v',
+            '--exit-code',
+            '1',
+          ],
+          { cwd: tmpScanRoot, stdio: 'inherit' },
+        );
+      } finally {
+        fs.rmSync(tmpScanRoot, { recursive: true, force: true });
+      }
+    } else {
+      dirRes = runGitleaksSync(
+        binaryPath,
+        [
+          'dir',
+          '.',
+          '--config',
+          configPath,
+          '--redact',
+          '--no-banner',
+          '-v',
+          '--exit-code',
+          '1',
+        ],
+        { stdio: 'inherit' },
+      );
+    }
     if (dirRes.status !== 0) {
       process.exit(dirRes.status ?? 1);
     }

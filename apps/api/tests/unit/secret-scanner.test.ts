@@ -296,4 +296,55 @@ describe('Secret Scanners (Gitleaks v8.24.2 & Custom Defense-in-Depth Scanner)',
       fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
   });
+
+  it('rejects hardcoded client secrets or passwords in Keycloak realm JSON and fallback admin defaults in Compose while allowing env substitution', async () => {
+    const scanner = await loadCustomScanner();
+    const fakeRealmSecret = ['realm', 'hardcoded', 'secret', '999'].join('_');
+    const fakeUserPass = ['dev', 'fixed', 'pass', '123'].join('_');
+    const badRealm = scanner.scanContentForSecrets(
+      'infra/keycloak/secureflow-realm.json',
+      JSON.stringify({
+        clients: [{ clientId: 'secureflow-bff', secret: fakeRealmSecret }],
+        users: [{ username: 'dev-user', credentials: [{ type: 'password', value: fakeUserPass }] }],
+      }, null, 2),
+    );
+
+    expect(badRealm.violations.map((v) => v.ruleId)).toEqual([
+      'HARDCODED_KEYCLOAK_REALM_CREDENTIAL',
+      'HARDCODED_KEYCLOAK_REALM_CREDENTIAL',
+    ]);
+    expect(JSON.stringify(badRealm.violations)).not.toContain(fakeRealmSecret);
+    expect(JSON.stringify(badRealm.violations)).not.toContain(fakeUserPass);
+
+    const goodRealm = scanner.scanContentForSecrets(
+      'infra/keycloak/secureflow-realm.json',
+      JSON.stringify({
+        clients: [{ clientId: 'secureflow-bff', secret: '${OIDC_CLIENT_SECRET}' }],
+        users: [{ username: 'dev-user', credentials: [{ type: 'password', value: '${KEYCLOAK_DEV_ADMIN_PASSWORD}' }] }],
+      }, null, 2),
+    );
+    expect(goodRealm.violations).toHaveLength(0);
+
+    const badCompose = scanner.scanContentForSecrets(
+      'compose.yaml',
+      [
+        'services:',
+        '  keycloak:',
+        '    environment:',
+        '      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}',
+      ].join('\n'),
+    );
+    expect(badCompose.violations.map((v) => v.ruleId)).toEqual(['HARDCODED_COMPOSE_FALLBACK_CREDENTIAL']);
+
+    const goodCompose = scanner.scanContentForSecrets(
+      'compose.yaml',
+      [
+        'services:',
+        '  keycloak:',
+        '    environment:',
+        '      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD must be set in .env}',
+      ].join('\n'),
+    );
+    expect(goodCompose.violations).toHaveLength(0);
+  });
 });

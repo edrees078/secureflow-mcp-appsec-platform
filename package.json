@@ -25,6 +25,7 @@
     "db:test:acceptance": "pnpm --filter @secureflow/domain run db:test:acceptance",
     "db:test:auth": "pnpm --filter @secureflow/domain run db:test:auth",
     "db:test:api": "pnpm --filter @secureflow/api run test:integration",
+    "db:test:keycloak": "pnpm --filter @secureflow/api run test:keycloak",
     "db:up": "docker compose up -d",
     "db:validate": "node scripts/validate-compose.mjs",
     "dev:api": "pnpm --filter @secureflow/api dev",

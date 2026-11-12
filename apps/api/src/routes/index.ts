@@ -6,8 +6,9 @@ import { createProjectsRouter } from './v1/projects.js';
 import { createFindingsRouter } from './v1/findings.js';
 import { createTasksRouter } from './v1/tasks.js';
 import { createAuditEventsRouter } from './v1/audit-events.js';
+import { createAuthRouter, type AuthRouterOptions } from './v1/auth.js';
 
-export { healthRouter };
+export { healthRouter, createAuthRouter, type AuthRouterOptions };
 
 export function createApiRouter(services: DomainServices): ExpressRouter {
   const router = Router();

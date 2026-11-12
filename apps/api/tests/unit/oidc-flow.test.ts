@@ -7,7 +7,8 @@ import { UnauthorizedError } from '@secureflow/shared';
 
 const ISSUER_URL = 'https://keycloak.example.com/realms/secureflow';
 const CLIENT_ID = 'secureflow-api-client';
-const REDIRECT_URI = 'https://app.secureflow.example/api/v1/auth/callback';
+const ALLOWED_ORIGIN = 'https://app.secureflow.example';
+const REDIRECT_URI = `${ALLOWED_ORIGIN}/api/v1/auth/callback`;
 
 function createTestAuthConfig(): AuthRuntimeConfig {
   return {
@@ -20,6 +21,8 @@ function createTestAuthConfig(): AuthRuntimeConfig {
       clientAuthMethod: 'client_secret_basic',
       redirectUri: REDIRECT_URI,
       allowedRedirectUris: [REDIRECT_URI],
+      postLogoutRedirectUri: `${ALLOWED_ORIGIN}/login`,
+      allowedPostLogoutRedirectUris: [`${ALLOWED_ORIGIN}/login`],
       scopes: 'openid email profile',
       clockToleranceSeconds: 30,
       allowInsecureHttp: false,
@@ -155,6 +158,15 @@ describe('Gate 4B.2 OIDC Flow Coordinator', () => {
         url.searchParams.set('code_challenge', params.codeChallenge);
         url.searchParams.set('code_challenge_method', params.codeChallengeMethod);
         url.searchParams.set('scope', params.scope ?? authConfig.oidc.scopes);
+        return Promise.resolve(url);
+      }),
+      buildEndSessionUrl: vi.fn().mockImplementation((params) => {
+        const url = new URL(`${ISSUER_URL}/protocol/openid-connect/logout`);
+        url.searchParams.set('client_id', CLIENT_ID);
+        url.searchParams.set(
+          'post_logout_redirect_uri',
+          params?.postLogoutRedirectUri ?? `${ALLOWED_ORIGIN}/login`,
+        );
         return Promise.resolve(url);
       }),
       exchangeAuthorizationCode: vi.fn().mockResolvedValue(verifiedIdentityFixture),
@@ -396,5 +408,23 @@ describe('Gate 4B.2 OIDC Flow Coordinator', () => {
     expect(auditJson).not.toContain(sensitiveVerifier);
     expect(auditJson).not.toContain(sensitiveRawTxn);
     expect(auditRecord.metadata).toEqual({ protocolCode: 'OIDC_TOKEN_EXCHANGE_FAILED' });
+  });
+
+  it('builds allowlisted RP-initiated logout URLs and falls back cleanly on IdP discovery failure', async () => {
+    const coordinator = new OidcAuthFlowCoordinator(mockAuthService, mockOidcClient, authConfig);
+
+    const logoutUrl = await coordinator.buildLogoutUrl();
+    expect(logoutUrl?.toString()).toContain(`${ISSUER_URL}/protocol/openid-connect/logout`);
+    expect(logoutUrl?.searchParams.get('client_id')).toBe(CLIENT_ID);
+    expect(logoutUrl?.searchParams.get('post_logout_redirect_uri')).toBe(`${ALLOWED_ORIGIN}/login`);
+
+    await expect(
+      coordinator.buildLogoutUrl({ postLogoutRedirectUri: 'https://evil.example/logout' }),
+    ).rejects.toMatchObject({ protocolCode: 'OIDC_REDIRECT_URI_NOT_ALLOWED' });
+
+    vi.mocked(mockOidcClient.buildEndSessionUrl).mockRejectedValueOnce(
+      new OidcProtocolError('IdP discovery down', 'OIDC_DISCOVERY_FAILED', 503),
+    );
+    await expect(coordinator.buildLogoutUrl()).resolves.toBeNull();
   });
 });

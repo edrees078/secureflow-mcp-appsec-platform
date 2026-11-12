@@ -4,12 +4,19 @@ import type {
   UserProfileEntity,
 } from '@secureflow/domain';
 import type { AuthFailureReason } from '@secureflow/schemas';
-import type { AuthRuntimeConfig } from '../config/auth.js';
+import {
+  normalizeAndValidateRedirectUri,
+  type AuthRuntimeConfig,
+} from '../config/auth.js';
 import { OidcProtocolError, type IOidcClient } from './oidc-client.js';
 
 export interface StartOidcLoginInput {
   readonly returnTo?: string;
   readonly redirectUri?: string;
+}
+
+export interface LogoutOidcInput {
+  readonly postLogoutRedirectUri?: string | undefined;
 }
 
 export interface StartedOidcLoginFlow {
@@ -95,6 +102,38 @@ export class OidcAuthFlowCoordinator {
       rawTxnToken: txn.rawTxnToken,
       expiresAt: txn.expiresAt,
     };
+  }
+
+  /**
+   * Builds an allowlisted OIDC RP-initiated logout URL from IdP discovery metadata.
+   * Rejects disallowed redirect URIs synchronously while failing open to null on transient IdP outage.
+   */
+  public async buildLogoutUrl(input?: LogoutOidcInput): Promise<URL | null> {
+    let allowlistedPostLogoutUri: string;
+    try {
+      allowlistedPostLogoutUri = normalizeAndValidateRedirectUri(
+        input?.postLogoutRedirectUri ?? this.config.oidc.postLogoutRedirectUri,
+        this.config.oidc.allowedPostLogoutRedirectUris,
+        !this.config.oidc.allowInsecureHttp,
+      );
+    } catch {
+      throw new OidcProtocolError(
+        'OIDC post-logout redirect URI is not permitted by allowlist',
+        'OIDC_REDIRECT_URI_NOT_ALLOWED',
+        400,
+      );
+    }
+
+    try {
+      return await this.oidcClient.buildEndSessionUrl({
+        postLogoutRedirectUri: allowlistedPostLogoutUri,
+      });
+    } catch (err) {
+      if (err instanceof OidcProtocolError && err.protocolCode === 'OIDC_REDIRECT_URI_NOT_ALLOWED') {
+        throw err;
+      }
+      return null;
+    }
   }
 
   public async completeAuthorizationCallback(

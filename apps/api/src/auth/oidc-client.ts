@@ -40,6 +40,7 @@ export interface OidcServerMetadataSummary {
   readonly authorizationEndpoint: string;
   readonly tokenEndpoint: string;
   readonly jwksUri: string;
+  readonly endSessionEndpoint?: string;
   readonly supportsPkceS256: boolean;
 }
 
@@ -50,6 +51,10 @@ export interface OidcAuthorizationRequestParams {
   readonly codeChallenge: string;
   readonly codeChallengeMethod: 'S256';
   readonly scope?: string;
+}
+
+export interface OidcEndSessionRequestParams {
+  readonly postLogoutRedirectUri?: string | undefined;
 }
 
 export interface OidcAuthorizationCallbackInput {
@@ -76,6 +81,7 @@ export interface VerifiedOidcTokenIdentity {
 export interface IOidcClient {
   discover(): Promise<OidcServerMetadataSummary>;
   buildAuthorizationUrl(params: OidcAuthorizationRequestParams): Promise<URL>;
+  buildEndSessionUrl(params?: OidcEndSessionRequestParams): Promise<URL | null>;
   exchangeAuthorizationCode(
     input: OidcAuthorizationCallbackInput,
   ): Promise<VerifiedOidcTokenIdentity>;
@@ -318,29 +324,41 @@ export class OpenIdConnectClient implements IOidcClient {
       authorizationEndpoint: meta.authorization_endpoint!,
       tokenEndpoint: meta.token_endpoint!,
       jwksUri: meta.jwks_uri!,
+      ...(meta.end_session_endpoint ? { endSessionEndpoint: meta.end_session_endpoint } : {}),
       supportsPkceS256:
         !Array.isArray(meta.code_challenge_methods_supported) ||
         meta.code_challenge_methods_supported.includes('S256'),
     };
   }
 
-  public async buildAuthorizationUrl(
-    params: OidcAuthorizationRequestParams,
-  ): Promise<URL> {
-    let allowlistedRedirectUri: string;
+  private validateAllowlistedUri(
+    candidateUri: string,
+    allowlist: readonly string[],
+    errorMessage: string,
+  ): string {
     try {
-      allowlistedRedirectUri = normalizeAndValidateRedirectUri(
-        params.redirectUri,
-        this.config.allowedRedirectUris,
+      return normalizeAndValidateRedirectUri(
+        candidateUri,
+        allowlist,
         !this.config.allowInsecureHttp,
       );
     } catch {
       throw new OidcProtocolError(
-        'OIDC redirect URI is not permitted by allowlist',
+        errorMessage,
         'OIDC_REDIRECT_URI_NOT_ALLOWED',
         400,
       );
     }
+  }
+
+  public async buildAuthorizationUrl(
+    params: OidcAuthorizationRequestParams,
+  ): Promise<URL> {
+    const allowlistedRedirectUri = this.validateAllowlistedUri(
+      params.redirectUri,
+      this.config.allowedRedirectUris,
+      'OIDC redirect URI is not permitted by allowlist',
+    );
 
     if (params.codeChallengeMethod !== 'S256') {
       throw new OidcProtocolError(
@@ -371,23 +389,40 @@ export class OpenIdConnectClient implements IOidcClient {
     return authorizationUrl;
   }
 
+  /**
+   * Builds a standards-based RP-initiated OIDC logout URL from discovered `end_session_endpoint`
+   * using strictly allowlisted `post_logout_redirect_uri` and non-secret `client_id`.
+   * Returns null cleanly when the OpenID Provider metadata omits `end_session_endpoint`.
+   */
+  public async buildEndSessionUrl(
+    params?: OidcEndSessionRequestParams,
+  ): Promise<URL | null> {
+    const allowlistedPostLogoutUri = this.validateAllowlistedUri(
+      params?.postLogoutRedirectUri ?? this.config.postLogoutRedirectUri,
+      this.config.allowedPostLogoutRedirectUris,
+      'OIDC post-logout redirect URI is not permitted by allowlist',
+    );
+
+    const cfg = await this.getConfiguration();
+    const meta = cfg.serverMetadata();
+    if (!meta.end_session_endpoint) {
+      return null;
+    }
+
+    return client.buildEndSessionUrl(cfg, {
+      client_id: this.config.clientId,
+      post_logout_redirect_uri: allowlistedPostLogoutUri,
+    });
+  }
+
   public async exchangeAuthorizationCode(
     input: OidcAuthorizationCallbackInput,
   ): Promise<VerifiedOidcTokenIdentity> {
-    let allowlistedRedirectUri: string;
-    try {
-      allowlistedRedirectUri = normalizeAndValidateRedirectUri(
-        input.expectedRedirectUri,
-        this.config.allowedRedirectUris,
-        !this.config.allowInsecureHttp,
-      );
-    } catch {
-      throw new OidcProtocolError(
-        'OIDC callback redirect URI is not permitted by allowlist',
-        'OIDC_REDIRECT_URI_NOT_ALLOWED',
-        400,
-      );
-    }
+    const allowlistedRedirectUri = this.validateAllowlistedUri(
+      input.expectedRedirectUri,
+      this.config.allowedRedirectUris,
+      'OIDC callback redirect URI is not permitted by allowlist',
+    );
 
     let parsedCallbackUrl: URL;
     try {

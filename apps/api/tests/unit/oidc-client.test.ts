@@ -169,6 +169,8 @@ describe('Gate 4B.2 OIDC Client, Protocol Validation & Flow Coordination', () =>
       | undefined;
     let idTokenAlgOverride: string | undefined;
     let tokenHttpError: { status: number; body: Record<string, unknown> } | undefined;
+    let includeEndSessionEndpoint = true;
+    let issParamSupported = true;
 
     const customFetch = async (url: string, init?: RequestInit): Promise<Response> => {
       if (url === `${ISSUER_URL}/.well-known/openid-configuration`) {
@@ -178,12 +180,15 @@ describe('Gate 4B.2 OIDC Client, Protocol Validation & Flow Coordination', () =>
             authorization_endpoint: `${ISSUER_URL}/protocol/openid-connect/auth`,
             token_endpoint: `${ISSUER_URL}/protocol/openid-connect/token`,
             jwks_uri: `${ISSUER_URL}/protocol/openid-connect/certs`,
+            ...(includeEndSessionEndpoint
+              ? { end_session_endpoint: `${ISSUER_URL}/protocol/openid-connect/logout` }
+              : {}),
             response_types_supported: ['code'],
             subject_types_supported: ['public'],
             id_token_signing_alg_values_supported: ['RS256'],
             code_challenge_methods_supported: ['S256'],
             token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
-            authorization_response_iss_parameter_supported: true,
+            authorization_response_iss_parameter_supported: issParamSupported,
           }),
           {
             status: 200,
@@ -292,6 +297,12 @@ describe('Gate 4B.2 OIDC Client, Protocol Validation & Flow Coordination', () =>
       },
       setTokenHttpError: (err: { status: number; body: Record<string, unknown> } | undefined) => {
         tokenHttpError = err;
+      },
+      setIncludeEndSessionEndpoint: (include: boolean) => {
+        includeEndSessionEndpoint = include;
+      },
+      setIssParamSupported: (supported: boolean) => {
+        issParamSupported = supported;
       },
       getJwksFetchCount: () => jwksFetchCount,
     };
@@ -633,5 +644,57 @@ describe('Gate 4B.2 OIDC Client, Protocol Validation & Flow Coordination', () =>
         metadata: { protocolCode: 'OIDC_TOKEN_EXCHANGE_FAILED' },
       }),
     );
+  });
+
+  it('enforces RFC 9207 missing iss rejection when authorization_response_iss_parameter_supported is true and supports RP-initiated logout URL construction', async () => {
+    const authCfg = createTestAuthConfig();
+    const idp = createMockIdpTransport();
+    const oidc = new OpenIdConnectClient(authCfg.oidc, { customFetch: idp.customFetch });
+
+    // 1. Callback omitting `iss` when discovery advertises authorization_response_iss_parameter_supported: true MUST fail closed
+    const missingIssCb = new URL(REDIRECT_URI);
+    missingIssCb.searchParams.set('code', 'auth_code_missing_iss');
+    missingIssCb.searchParams.set('state', 'state_fixture_abcdef1234567890');
+    await expect(
+      oidc.exchangeAuthorizationCode({
+        callbackUrl: missingIssCb,
+        expectedRedirectUri: REDIRECT_URI,
+        expectedState: 'state_fixture_abcdef1234567890',
+        expectedNonce: 'nonce_fixture_abcdef1234567890',
+        pkceCodeVerifier: 'verifier_fixture_abcdef1234567890_secret_pkce',
+      }),
+    ).rejects.toMatchObject({ protocolCode: 'OIDC_ISSUER_MISMATCH' });
+
+    // 2. When IdP does not advertise RFC 9207 iss support, discovery clearCache reloads metadata and callback without iss succeeds
+    idp.setIssParamSupported(false);
+    oidc.clearCache();
+    const verifiedWithoutIss = await oidc.exchangeAuthorizationCode({
+      callbackUrl: missingIssCb,
+      expectedRedirectUri: REDIRECT_URI,
+      expectedState: 'state_fixture_abcdef1234567890',
+      expectedNonce: 'nonce_fixture_abcdef1234567890',
+      pkceCodeVerifier: 'verifier_fixture_abcdef1234567890_secret_pkce',
+    });
+    expect(verifiedWithoutIss.issuer).toBe(ISSUER_URL);
+
+    // 3. RP-initiated logout URL uses discovered end_session_endpoint + allowlisted post_logout_redirect_uri and no secrets/tokens
+    const endSessionUrl = await oidc.buildEndSessionUrl();
+    expect(endSessionUrl?.toString()).toContain(`${ISSUER_URL}/protocol/openid-connect/logout`);
+    expect(endSessionUrl?.searchParams.get('client_id')).toBe(CLIENT_ID);
+    expect(endSessionUrl?.searchParams.get('post_logout_redirect_uri')).toBe(
+      authCfg.oidc.postLogoutRedirectUri,
+    );
+    expect(endSessionUrl?.searchParams.has('id_token_hint')).toBe(false);
+    expect(endSessionUrl?.toString()).not.toContain(CLIENT_SECRET);
+
+    // 4. Rejects unallowlisted postLogoutRedirectUri with OIDC_REDIRECT_URI_NOT_ALLOWED
+    await expect(
+      oidc.buildEndSessionUrl({ postLogoutRedirectUri: 'https://evil.example/phish' }),
+    ).rejects.toMatchObject({ protocolCode: 'OIDC_REDIRECT_URI_NOT_ALLOWED' });
+
+    // 5. Gracefully returns null if discovery metadata omits end_session_endpoint
+    idp.setIncludeEndSessionEndpoint(false);
+    oidc.clearCache();
+    await expect(oidc.buildEndSessionUrl()).resolves.toBeNull();
   });
 });

@@ -218,4 +218,37 @@ describe('Gate 4B.2 Authentication & Security Configuration Validation', () => {
       ),
     ).toThrow(/https/);
   });
+
+  it('validates OIDC_POST_LOGOUT_REDIRECT_URI and OIDC_ALLOWED_POST_LOGOUT_REDIRECT_URIS including production HTTPS enforcement', () => {
+    const prodConfig = loadAuthConfig({
+      NODE_ENV: 'production',
+      AUTH_ENABLED: 'true',
+      CORS_ORIGIN: 'https://app.secureflow.example',
+      OIDC_ISSUER_URL: 'https://idp.secureflow.example/realms/secureflow',
+      OIDC_CLIENT_ID: 'secureflow-bff',
+      OIDC_CLIENT_SECRET: 'prod-strong-client-secret-value-over-16-chars',
+      OIDC_REDIRECT_URI: 'https://app.secureflow.example/api/v1/auth/callback',
+      OIDC_POST_LOGOUT_REDIRECT_URI: 'https://app.secureflow.example/login',
+      OIDC_ALLOWED_POST_LOGOUT_REDIRECT_URIS: 'https://app.secureflow.example/signed-out',
+    });
+
+    expect(prodConfig.oidc.postLogoutRedirectUri).toBe('https://app.secureflow.example/login');
+    expect(prodConfig.oidc.allowedPostLogoutRedirectUris).toEqual([
+      'https://app.secureflow.example/login',
+      'https://app.secureflow.example/signed-out',
+    ]);
+
+    expect(() =>
+      loadAuthConfig({
+        NODE_ENV: 'production',
+        AUTH_ENABLED: 'true',
+        CORS_ORIGIN: 'https://app.secureflow.example',
+        OIDC_ISSUER_URL: 'https://idp.secureflow.example/realms/secureflow',
+        OIDC_CLIENT_ID: 'secureflow-bff',
+        OIDC_CLIENT_SECRET: 'prod-strong-client-secret-value-over-16-chars',
+        OIDC_REDIRECT_URI: 'https://app.secureflow.example/api/v1/auth/callback',
+        OIDC_POST_LOGOUT_REDIRECT_URI: 'http://app.secureflow.example/login',
+      }),
+    ).toThrow(/https/i);
+  });
 });

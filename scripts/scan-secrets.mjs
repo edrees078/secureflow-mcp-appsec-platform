@@ -218,6 +218,47 @@ export function scanContentForSecrets(rawRelPath, content) {
         length: passwordCandidate.length,
       });
     }
+
+    // 4. Evaluate Keycloak realm JSON imports for hardcoded client secrets or passwords
+    if (/^infra\/keycloak\/.*\.json$/i.test(relPath)) {
+      const realmCredRegex = /"(secret|value)"\s*:\s*"([^"]+)"/g;
+      let realmMatch;
+      while ((realmMatch = realmCredRegex.exec(line)) !== null) {
+        const fieldName = realmMatch[1];
+        const candidate = realmMatch[2];
+        if (/^\$\{[A-Z0-9_]+\}$/.test(candidate)) {
+          continue;
+        }
+        const digest = sha256Hex(candidate);
+        violations.push({
+          file: relPath,
+          line: lineNo,
+          ruleId: 'HARDCODED_KEYCLOAK_REALM_CREDENTIAL',
+          description: `Hardcoded '${fieldName}' credential in Keycloak realm import (must use \${ENV_VAR} substitution)`,
+          digestPrefix: digest.slice(0, 16),
+          length: candidate.length,
+        });
+      }
+    }
+
+    // 5. Evaluate Compose configurations for fallback admin/secret defaults
+    if (/^compose\.ya?ml$/i.test(relPath)) {
+      const composeFallbackRegex =
+        /(?:KEYCLOAK_ADMIN(?:_USER|_PASSWORD)?|KC_BOOTSTRAP_ADMIN_(?:USERNAME|PASSWORD)|OIDC_CLIENT_SECRET|KEYCLOAK_DEV_[A-Z0-9_]+_PASSWORD)\s*:\s*\$\{[A-Z0-9_]+:-([^}]+)\}/gi;
+      let composeMatch;
+      while ((composeMatch = composeFallbackRegex.exec(line)) !== null) {
+        const candidate = composeMatch[1];
+        const digest = sha256Hex(candidate);
+        violations.push({
+          file: relPath,
+          line: lineNo,
+          ruleId: 'HARDCODED_COMPOSE_FALLBACK_CREDENTIAL',
+          description: 'Default fallback credential in Compose configuration (must use :? required error syntax)',
+          digestPrefix: digest.slice(0, 16),
+          length: candidate.length,
+        });
+      }
+    }
   }
 
   return { violations, allowlistedHits };
