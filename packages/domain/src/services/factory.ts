@@ -3,7 +3,14 @@ import { ProjectService } from './project-service.js';
 import { AuditService } from './audit-service.js';
 import { FindingService } from './finding-service.js';
 import { TaskService } from './task-service.js';
-import type { IProjectService, IAuditService, IFindingService, ITaskService } from './types.js';
+import { AuthService } from './auth-service.js';
+import type {
+  IProjectService,
+  IAuditService,
+  IFindingService,
+  ITaskService,
+  IAuthService,
+} from './types.js';
 import { SecureFlowError } from '@secureflow/shared';
 
 export interface DomainServicesConfig {
@@ -20,6 +27,7 @@ export interface DomainServices {
   readonly auditService: IAuditService;
   readonly findingService: IFindingService;
   readonly taskService: ITaskService;
+  readonly authService?: IAuthService;
   readonly close: () => Promise<void>;
 }
 
@@ -36,7 +44,7 @@ export interface DomainServices {
  */
 export function createDomainServices(
   config: DomainServicesConfig | DatabaseManager,
-): DomainServices {
+): DomainServices & { readonly authService: IAuthService } {
   if (!config) {
     throw new SecureFlowError(
       'createDomainServices failed: config or DatabaseManager required',
@@ -55,6 +63,7 @@ export function createDomainServices(
     auditService: new AuditService(dbManager),
     findingService: new FindingService(dbManager),
     taskService: new TaskService(dbManager),
+    authService: new AuthService(dbManager),
     close: async () => {
       if (isOwned) {
         await dbManager.shutdown();

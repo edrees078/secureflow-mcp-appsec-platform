@@ -37,6 +37,15 @@ import type {
   AddProjectMemberInput,
   UpdateTaskNotesInput,
   QueryAuditEventsInput,
+  CreateOidcTransactionInput,
+  ConsumeOidcTransactionInput,
+  VerifiedOidcIdentityInput,
+  ResolveSessionInput,
+  RevokeSessionInput,
+  BootstrapInitialAdminInput,
+  UpdateUserGlobalRoleInput,
+  DeactivateUserInput,
+  RecordAuthFailureInput,
 } from '@secureflow/schemas';
 
 import type { ActorContext } from '../policy/actor-context.js';
@@ -46,6 +55,9 @@ import type {
   FindingEntity,
   RemediationTaskEntity,
   AuditEventEntity,
+  UserAuthEntity,
+  UserProfileEntity,
+  UserSessionEntity,
   PaginatedResult,
   RepositoryContainer,
 } from '../db/repositories/types.js';
@@ -138,4 +150,107 @@ export interface ITaskService {
  */
 export interface IAuditService {
   queryAuditLogs(actor: ActorContext, filter: QueryAuditEventsInput): Promise<PaginatedResult<AuditEventEntity>>;
+}
+
+// ============================================================================
+// Authentication & Session Domain Contracts (Sub-Gate 4B.1)
+// ============================================================================
+
+export interface CreatedOidcTransactionResult {
+  readonly id: string;
+  readonly rawTxnToken: string;
+  readonly state: string;
+  readonly nonce: string;
+  readonly codeVerifier: string;
+  readonly codeChallenge: string;
+  readonly codeChallengeMethod: 'S256';
+  readonly returnTo: string;
+  readonly expiresAt: Date;
+}
+
+export interface ConsumedOidcTransactionResult {
+  readonly id: string;
+  readonly nonce: string;
+  readonly codeVerifier: string;
+  readonly returnTo: string;
+  readonly consumedAt: Date;
+}
+
+export interface EstablishedSessionResult {
+  readonly rawSessionToken: string;
+  readonly session: UserSessionEntity;
+  readonly user: UserProfileEntity;
+  readonly actor: ActorContext;
+  readonly jitProvisioned: boolean;
+}
+
+export interface ResolvedSessionActorResult {
+  readonly actor: ActorContext;
+  readonly session: UserSessionEntity;
+}
+
+/**
+ * Authentication, Session Lifecycle, Least-Privilege Provisioning, and Bootstrap Service Interface.
+ */
+export interface IAuthService {
+  createOidcTransaction(
+    input?: CreateOidcTransactionInput,
+    now?: Date,
+  ): Promise<CreatedOidcTransactionResult>;
+
+  consumeOidcTransaction(
+    input: ConsumeOidcTransactionInput,
+    now?: Date,
+  ): Promise<ConsumedOidcTransactionResult>;
+
+  establishAuthenticatedSession(
+    input: VerifiedOidcIdentityInput,
+    now?: Date,
+  ): Promise<EstablishedSessionResult>;
+
+  resolveSessionActor(
+    input: ResolveSessionInput,
+    now?: Date,
+  ): Promise<ResolvedSessionActorResult>;
+
+  revokeSession(
+    input: RevokeSessionInput,
+    now?: Date,
+  ): Promise<boolean>;
+
+  revokeAllUserSessions(
+    actor: ActorContext,
+    targetUserId: string,
+    reason?: string,
+    now?: Date,
+  ): Promise<number>;
+
+  revokeSessionsByOidcSid(
+    oidcSid: string,
+    reason?: string,
+    now?: Date,
+  ): Promise<number>;
+
+  bootstrapInitialAdmin(
+    input: BootstrapInitialAdminInput,
+    now?: Date,
+  ): Promise<UserProfileEntity>;
+
+  updateUserGlobalRole(
+    actor: ActorContext,
+    targetUserId: string,
+    input: UpdateUserGlobalRoleInput,
+    now?: Date,
+  ): Promise<UserAuthEntity>;
+
+  deactivateUser(
+    actor: ActorContext,
+    targetUserId: string,
+    input: DeactivateUserInput,
+    now?: Date,
+  ): Promise<UserAuthEntity>;
+
+  recordAuthenticationFailure(
+    input: RecordAuthFailureInput,
+  ): Promise<AuditEventEntity | null>;
 }

@@ -126,6 +126,7 @@ model User {
   createdTasks       RemediationTask[] @relation("TaskAssignedBy")
   findingEvents      FindingEvent[]    @relation("FindingEventActor")
   auditEvents        AuditEvent[]      @relation("AuditEventActor")
+  sessions           UserSession[]     @relation("UserSessions")
 
   @@map("users")
 }
@@ -266,4 +267,44 @@ model AuditEvent {
   @@index([resourceId, resourceType])
   @@index([createdAt(sort: Desc)])
   @@map("audit_events")
+}
+
+model UserSession {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  sessionTokenHash String    @unique @map("session_token_hash") @db.VarChar(64)
+  csrfToken        String    @map("csrf_token") @db.VarChar(64)
+  oidcSid          String?   @map("oidc_sid") @db.VarChar(255)
+  ipAddress        String?   @map("ip_address") @db.Inet
+  userAgent        String?   @map("user_agent") @db.VarChar(500)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastActiveAt     DateTime  @default(now()) @map("last_active_at") @db.Timestamptz(6)
+  idleExpiresAt    DateTime  @map("idle_expires_at") @db.Timestamptz(6)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokeReason     String?   @map("revoke_reason") @db.VarChar(100)
+
+  // Relations
+  user User @relation("UserSessions", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@index([idleExpiresAt])
+  @@index([oidcSid])
+  @@map("user_sessions")
+}
+
+model OidcTransaction {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  txnTokenHash String    @unique @map("txn_token_hash") @db.VarChar(64)
+  stateHash    String    @unique @map("state_hash") @db.VarChar(64)
+  nonce        String    @map("nonce") @db.VarChar(255)
+  codeVerifier String    @map("code_verifier") @db.VarChar(255)
+  returnTo     String    @default("/") @map("return_to") @db.VarChar(500)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt   DateTime? @map("consumed_at") @db.Timestamptz(6)
+
+  @@index([expiresAt])
+  @@map("oidc_transactions")
 }

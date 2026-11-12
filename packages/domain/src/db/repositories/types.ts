@@ -15,6 +15,8 @@ import type { Prisma } from '../../generated/prisma/client.js';
  */
 export type PrismaDbClient = {
   user: Prisma.UserDelegate;
+  userSession?: Prisma.UserSessionDelegate;
+  oidcTransaction?: Prisma.OidcTransactionDelegate;
   project: Prisma.ProjectDelegate;
   projectMember: Prisma.ProjectMemberDelegate;
   finding: Prisma.FindingDelegate;
@@ -29,6 +31,45 @@ export interface UserAuthEntity {
   id: string;
   isActive: boolean;
   globalRole: GlobalRole;
+}
+
+export interface UserProfileEntity {
+  id: string;
+  sub: string;
+  email: string;
+  displayName: string;
+  globalRole: GlobalRole;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface UserSessionEntity {
+  id: string;
+  userId: string;
+  tokenHash: string;
+  csrfToken: string;
+  oidcSid: string | null;
+  ipAddress: string | null;
+  userAgent: string | null;
+  createdAt: Date;
+  lastActivityAt: Date;
+  idleExpiresAt: Date;
+  expiresAt: Date;
+  revokedAt: Date | null;
+  revocationReason: string | null;
+}
+
+export interface OidcTransactionEntity {
+  id: string;
+  txnTokenHash: string;
+  stateHash: string;
+  nonce: string;
+  codeVerifier: string;
+  returnTo: string;
+  createdAt: Date;
+  expiresAt: Date;
+  consumedAt: Date | null;
 }
 
 // ============================================================================
@@ -282,6 +323,35 @@ export interface CreateAuditEventRepoData {
   userAgent?: string | null;
 }
 
+export interface CreateUserRepoData {
+  sub: string;
+  email: string;
+  displayName: string;
+  globalRole: GlobalRole;
+  isActive?: boolean;
+}
+
+export interface CreateUserSessionRepoData {
+  userId: string;
+  tokenHash: string;
+  csrfToken?: string;
+  oidcSid?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  lastActivityAt: Date;
+  idleExpiresAt: Date;
+  expiresAt: Date;
+}
+
+export interface CreateOidcTransactionRepoData {
+  txnTokenHash: string;
+  stateHash: string;
+  nonce: string;
+  codeVerifier: string;
+  returnTo: string;
+  expiresAt: Date;
+}
+
 // ============================================================================
 // Repository Interfaces
 // ============================================================================
@@ -321,6 +391,37 @@ export interface IUserRepository {
   lockUsers(userIds: string[], mode?: 'SHARE' | 'UPDATE'): Promise<Map<string, UserAuthEntity>>;
   deactivateUser(id: string): Promise<UserAuthEntity>;
   updateGlobalRole(id: string, role: GlobalRole): Promise<UserAuthEntity>;
+
+  // --- Sub-Gate 4B.1 Authentication & Bootstrap Extensions ---
+  findBySub?(sub: string): Promise<UserProfileEntity | null>;
+  findByEmail?(email: string): Promise<UserProfileEntity | null>;
+  findProfileById?(id: string): Promise<UserProfileEntity | null>;
+  lockUserBySub?(sub: string, mode?: 'SHARE' | 'UPDATE'): Promise<UserProfileEntity | null>;
+  lockUserByEmail?(email: string, mode?: 'SHARE' | 'UPDATE'): Promise<UserProfileEntity | null>;
+  createUser?(data: CreateUserRepoData): Promise<UserProfileEntity>;
+  updateDisplayName?(id: string, displayName: string): Promise<UserProfileEntity>;
+  acquireBootstrapAdvisoryLock?(): Promise<void>;
+  acquireIdentityProvisioningLocks?(sub: string, normalizedEmail: string): Promise<void>;
+  countActiveAdmins?(): Promise<number>;
+}
+
+export interface ISessionRepository {
+  create(data: CreateUserSessionRepoData): Promise<UserSessionEntity>;
+  findByTokenHash(tokenHash: string): Promise<UserSessionEntity | null>;
+  findById(id: string): Promise<UserSessionEntity | null>;
+  listActiveByUserId(userId: string, now?: Date): Promise<UserSessionEntity[]>;
+  touchActivity(id: string, lastActivityAt: Date, idleExpiresAt: Date): Promise<UserSessionEntity>;
+  revokeById(id: string, reason: string, revokedAt?: Date): Promise<boolean>;
+  revokeByTokenHash(tokenHash: string, reason: string, revokedAt?: Date): Promise<UserSessionEntity | null>;
+  revokeAllActiveForUser(userId: string, reason: string, revokedAt?: Date): Promise<number>;
+  revokeActiveByOidcSid(oidcSid: string, reason: string, revokedAt?: Date): Promise<number>;
+}
+
+export interface IOidcTransactionRepository {
+  create(data: CreateOidcTransactionRepoData): Promise<OidcTransactionEntity>;
+  findByTokenHash(txnTokenHash: string): Promise<OidcTransactionEntity | null>;
+  consumeAtomically(txnTokenHash: string, now?: Date): Promise<OidcTransactionEntity | null>;
+  deleteExpired(before: Date): Promise<number>;
 }
 
 export interface IFindingRepository {
@@ -373,4 +474,6 @@ export interface RepositoryContainer {
   taskRepo: ITaskRepository;
   auditRepo: IAuditRepository;
   userRepo: IUserRepository;
+  sessionRepo?: ISessionRepository;
+  oidcTransactionRepo?: IOidcTransactionRepository;
 }

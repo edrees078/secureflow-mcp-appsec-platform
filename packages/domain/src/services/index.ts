@@ -3,6 +3,12 @@ export { ProjectService } from './project-service.js';
 export { AuditService } from './audit-service.js';
 export { TaskService } from './task-service.js';
 export {
+  AuthService,
+  hashOpaqueToken,
+  generateOpaqueToken,
+  computePkceS256Challenge,
+} from './auth-service.js';
+export {
   createDomainServices,
   type DomainServices,
   type DomainServicesConfig,
@@ -16,6 +22,11 @@ export type {
   IFindingService,
   ITaskService,
   IAuditService,
+  IAuthService,
+  CreatedOidcTransactionResult,
+  ConsumedOidcTransactionResult,
+  EstablishedSessionResult,
+  ResolvedSessionActorResult,
   ListFindingsFilterInput,
   ListProjectsFilterInput,
   ForceCloseFindingInput,

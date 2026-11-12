@@ -12,11 +12,15 @@
  * - Authorization policies provide declarative object-level security enforcement (Gate 3C).
  */
 
-// Business Services & Trusted Composition Root (Gate 3D)
+// Business Services & Trusted Composition Root (Gate 3D & Gate 4B.1)
 export {
   FindingService,
   ProjectService,
   AuditService,
+  AuthService,
+  hashOpaqueToken,
+  generateOpaqueToken,
+  computePkceS256Challenge,
   createDomainServices,
   generateProjectSlug,
 } from './services/index.js';
@@ -25,6 +29,11 @@ export type {
   IFindingService,
   ITaskService,
   IAuditService,
+  IAuthService,
+  CreatedOidcTransactionResult,
+  ConsumedOidcTransactionResult,
+  EstablishedSessionResult,
+  ResolvedSessionActorResult,
   DomainServices,
   DomainServicesConfig,
   ListFindingsFilterInput,
@@ -60,6 +69,9 @@ export type {
   RemediationTaskEntity,
   AuditEventEntity,
   AuthoritativeUserEntity,
+  UserProfileEntity,
+  UserSessionEntity,
+  OidcTransactionEntity,
   PaginatedResult,
 } from './db/repositories/types.js';
 
@@ -70,6 +82,8 @@ export type {
   ITaskRepository,
   IAuditRepository,
   IUserRepository,
+  ISessionRepository,
+  IOidcTransactionRepository,
   UserAuthEntity,
 } from './db/repositories/types.js';
 
@@ -83,4 +97,7 @@ export type {
   CreateFindingEventRepoData,
   CreateTaskRepoData,
   CreateAuditEventRepoData,
+  CreateUserRepoData,
+  CreateUserSessionRepoData,
+  CreateOidcTransactionRepoData,
 } from './db/repositories/types.js';

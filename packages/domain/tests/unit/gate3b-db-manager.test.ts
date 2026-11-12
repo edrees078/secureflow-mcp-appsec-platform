@@ -102,6 +102,34 @@ describe('Gate 3B — DatabaseManager Lifecycle & Configuration (Offline Unit Te
 
       await expect(mgr.runTransaction(async () => 'ok')).rejects.toThrow(SecureFlowError);
     });
+
+    it('accepts valid custom PostgreSQL schema identifiers and isolates pool search_path', async () => {
+      const mgr = new DatabaseManager({
+        connectionString: validDevUrl,
+        schema: 'sf_boot_test_01',
+      });
+      const poolOptions = (mgr.getPool() as unknown as { options?: { options?: string } }).options;
+      expect(poolOptions?.options).toBe('-c search_path=sf_boot_test_01');
+      await mgr.shutdown();
+    });
+
+    it('NEGATIVE: rejects invalid PostgreSQL schema identifiers', () => {
+      expect(
+        () =>
+          new DatabaseManager({
+            connectionString: validDevUrl,
+            schema: 'bad-schema; DROP TABLE users',
+          }),
+      ).toThrowError(/Invalid PostgreSQL schema identifier/);
+
+      expect(
+        () =>
+          new DatabaseManager({
+            connectionString: validDevUrl,
+            schema: 'UPPERCASE_SCHEMA',
+          }),
+      ).toThrowError(/Invalid PostgreSQL schema identifier/);
+    });
   });
 
   describe('Database Test Isolation Safety Rules (validateTestDatabaseUrl)', () => {

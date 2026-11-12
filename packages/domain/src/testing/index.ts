@@ -94,6 +94,7 @@ import { ProjectService } from '../services/project-service.js';
 import { AuditService } from '../services/audit-service.js';
 import { FindingService } from '../services/finding-service.js';
 import { TaskService } from '../services/task-service.js';
+import { AuthService } from '../services/auth-service.js';
 import type { RepositoryContainer } from '../db/repositories/types.js';
 import { TEST_PERSISTENCE_TOKEN } from '../services/persistence-token.js';
 
@@ -129,6 +130,14 @@ export function createTestFindingService(repositories: RepositoryContainer): Fin
  */
 export function createTestTaskService(repositories: RepositoryContainer): TaskService {
   return new TaskService({ repositories, [TEST_PERSISTENCE_TOKEN]: true } as never);
+}
+
+/**
+ * Creates a test AuthService instance with injected mock or in-memory repositories.
+ * Strictly forbidden from being used in production application code.
+ */
+export function createTestAuthService(repositories: RepositoryContainer): AuthService {
+  return new AuthService({ repositories, [TEST_PERSISTENCE_TOKEN]: true } as never);
 }
 
 // ============================================================================

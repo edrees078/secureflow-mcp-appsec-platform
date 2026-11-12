@@ -12,6 +12,7 @@ export * from './dtos/project.dto.js';
 export * from './dtos/finding.dto.js';
 export * from './dtos/task.dto.js';
 export * from './dtos/audit.dto.js';
+export * from './dtos/auth.dto.js';
 
 /**
  * Shared Finding View Record.

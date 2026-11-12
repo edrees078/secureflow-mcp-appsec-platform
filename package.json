@@ -23,6 +23,7 @@
     "db:test:tasks": "pnpm --filter @secureflow/domain run db:test:tasks",
     "db:test:closure": "pnpm --filter @secureflow/domain run db:test:closure",
     "db:test:acceptance": "pnpm --filter @secureflow/domain run db:test:acceptance",
+    "db:test:auth": "pnpm --filter @secureflow/domain run db:test:auth",
     "db:test:api": "pnpm --filter @secureflow/api run test:integration",
     "db:up": "docker compose up -d",
     "db:validate": "node scripts/validate-compose.mjs",

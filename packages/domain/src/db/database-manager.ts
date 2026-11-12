@@ -133,7 +133,15 @@ export class DatabaseManager {
     this.targetPort = parsedUrl.port ? Number.parseInt(parsedUrl.port, 10) : 5432;
     this.targetSchema = this.config.schema ?? 'public';
 
-    // 1. Initialize dedicated connection pool
+    if (!/^[a-z_][a-z0-9_]{0,62}$/.test(this.targetSchema)) {
+      throw new Error(
+        `DatabaseManager: Invalid PostgreSQL schema identifier "${this.targetSchema}"`,
+      );
+    }
+
+    // 1. Initialize dedicated connection pool.
+    // For non-default schemas, bind session search_path strictly to targetSchema (no public fallback)
+    // so both Prisma ORM models and raw $queryRaw queries remain isolated within targetSchema.
     this.pool = new Pool({
       connectionString: this.config.connectionString,
       max: this.config.maxConnections,
@@ -141,6 +149,7 @@ export class DatabaseManager {
       connectionTimeoutMillis: this.config.connectionTimeoutMillis,
       statement_timeout: this.config.statementTimeoutMillis,
       ssl: this.config.ssl,
+      ...(this.targetSchema !== 'public' ? { options: `-c search_path=${this.targetSchema}` } : {}),
     });
 
     // Suppress unhandled pool errors during idle disconnection
