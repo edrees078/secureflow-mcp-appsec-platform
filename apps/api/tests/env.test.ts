@@ -132,4 +132,63 @@ describe('Environment Configuration & Validation', () => {
     expect(thrownMessage).not.toContain('secureflow_dev_password_change_me');
     expect(thrownMessage).not.toContain(sensitiveCandidateUrl);
   });
+
+  it('rejects insecure HTTP, localhost, and wildcard OIDC_POST_LOGOUT_REDIRECT_URI values in production loadEnv without leaking secrets', () => {
+    const prodClientSecret = 'prod_client_secret_fixture_value_over_32_chars';
+    const baseProdEnv = {
+      NODE_ENV: 'production',
+      DATABASE_URL:
+        'postgresql://secureflow:synthetic_prod_fixture_placeholder@db.internal:5432/secureflow_prod?schema=public',
+      AUTH_ENABLED: 'true',
+      CORS_ORIGIN: 'https://app.secureflow.example',
+      OIDC_ISSUER_URL: 'https://idp.secureflow.example/realms/secureflow',
+      OIDC_CLIENT_ID: 'secureflow-bff',
+      OIDC_CLIENT_SECRET: prodClientSecret,
+      OIDC_REDIRECT_URI: 'https://api.secureflow.example/api/v1/auth/callback',
+    };
+
+    for (const badPostLogoutUri of [
+      'http://app.secureflow.example/login',
+      'https://localhost:5173/login',
+      'https://*.secureflow.example/login',
+    ]) {
+      let thrown = '';
+      try {
+        loadEnv({
+          ...baseProdEnv,
+          OIDC_POST_LOGOUT_REDIRECT_URI: badPostLogoutUri,
+        });
+      } catch (err) {
+        thrown = err instanceof Error ? err.message : String(err);
+      }
+      expect(thrown).toMatch(/https|localhost|wildcard|invalid/i);
+      expect(thrown).not.toContain(prodClientSecret);
+    }
+
+    expect(() =>
+      loadEnv({
+        ...baseProdEnv,
+        OIDC_POST_LOGOUT_REDIRECT_URI: 'https://app.secureflow.example/login',
+        OIDC_ALLOWED_POST_LOGOUT_REDIRECT_URIS: 'http://app.secureflow.example/signed-out',
+      }),
+    ).toThrow(/https/i);
+  });
+
+  it('accepts hardened HTTPS OIDC_POST_LOGOUT_REDIRECT_URI and OIDC_ALLOWED_POST_LOGOUT_REDIRECT_URIS in production loadEnv', () => {
+    const prodEnv = loadEnv({
+      NODE_ENV: 'production',
+      DATABASE_URL:
+        'postgresql://secureflow:synthetic_prod_fixture_placeholder@db.internal:5432/secureflow_prod?schema=public',
+      AUTH_ENABLED: 'true',
+      CORS_ORIGIN: 'https://app.secureflow.example',
+      OIDC_ISSUER_URL: 'https://idp.secureflow.example/realms/secureflow',
+      OIDC_CLIENT_ID: 'secureflow-bff',
+      OIDC_CLIENT_SECRET: 'prod_client_secret_fixture_value_over_32_chars',
+      OIDC_REDIRECT_URI: 'https://api.secureflow.example/api/v1/auth/callback',
+      OIDC_POST_LOGOUT_REDIRECT_URI: 'https://app.secureflow.example/login',
+      OIDC_ALLOWED_POST_LOGOUT_REDIRECT_URIS: 'https://app.secureflow.example/signed-out',
+    });
+
+    expect(prodEnv.NODE_ENV).toBe('production');
+  });
 });

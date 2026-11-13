@@ -43,6 +43,8 @@ export const envSchema = z
       .optional(),
     OIDC_REDIRECT_URI: z.string().trim().optional(),
     OIDC_ALLOWED_REDIRECT_URIS: z.string().trim().optional(),
+    OIDC_POST_LOGOUT_REDIRECT_URI: z.string().trim().optional(),
+    OIDC_ALLOWED_POST_LOGOUT_REDIRECT_URIS: z.string().trim().optional(),
     OIDC_SCOPES: z.string().trim().optional(),
     OIDC_CLOCK_TOLERANCE_SECONDS: z.string().trim().optional(),
     OIDC_ALLOW_INSECURE_HTTP: z.enum(['true', 'false']).optional(),
@@ -120,7 +122,9 @@ export const envSchema = z
       data.OIDC_ISSUER_URL ||
       data.OIDC_CLIENT_ID ||
       data.OIDC_CLIENT_SECRET ||
-      data.OIDC_REDIRECT_URI,
+      data.OIDC_REDIRECT_URI ||
+      data.OIDC_POST_LOGOUT_REDIRECT_URI ||
+      data.OIDC_ALLOWED_POST_LOGOUT_REDIRECT_URIS,
     );
 
     if (hasPartialOidcConfig) {
@@ -135,6 +139,8 @@ export const envSchema = z
           OIDC_CLIENT_AUTH_METHOD: data.OIDC_CLIENT_AUTH_METHOD,
           OIDC_REDIRECT_URI: data.OIDC_REDIRECT_URI,
           OIDC_ALLOWED_REDIRECT_URIS: data.OIDC_ALLOWED_REDIRECT_URIS,
+          OIDC_POST_LOGOUT_REDIRECT_URI: data.OIDC_POST_LOGOUT_REDIRECT_URI,
+          OIDC_ALLOWED_POST_LOGOUT_REDIRECT_URIS: data.OIDC_ALLOWED_POST_LOGOUT_REDIRECT_URIS,
           OIDC_SCOPES: data.OIDC_SCOPES,
           OIDC_CLOCK_TOLERANCE_SECONDS: data.OIDC_CLOCK_TOLERANCE_SECONDS,
           OIDC_ALLOW_INSECURE_HTTP: data.OIDC_ALLOW_INSECURE_HTTP,

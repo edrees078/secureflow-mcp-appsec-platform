@@ -979,4 +979,80 @@ describe('Sub-Gate 4B.1 — AuthService, Session Lifecycle, Least-Privilege Prov
       expect(failedEvent?.afterState).toMatchObject({ reason: 'EMAIL_SUB_CONFLICT' });
     });
   });
+
+  describe('7. Session Concurrency Eviction & Short Idle Window Preservation (Gate 4B.4)', () => {
+    it('preserves configured idleTimeoutSeconds shorter than 30 minutes across sliding activity touches', async () => {
+      const loginTime = BASE_NOW;
+      const established = await authService.establishAuthenticatedSession(
+        {
+          sub: 'kc-short-idle-sub',
+          email: 'short-idle@example.com',
+          emailVerified: true,
+          idleTimeoutSeconds: 300, // 5 minutes (< 30m default floor)
+          absoluteTimeoutSeconds: 3600,
+        },
+        loginTime,
+      );
+
+      // Activity after 90 seconds (>= 60s threshold) extends idleExpiresAt by 300s (to t=390s), not 1800s
+      const tPlus90s = new Date(loginTime.getTime() + 90_000);
+      const touched = await authService.resolveSessionActor(
+        { rawSessionToken: established.rawSessionToken },
+        tPlus90s,
+      );
+      expect(touched.session.idleExpiresAt.getTime()).toBe(tPlus90s.getTime() + 300_000);
+
+      // Next request after another 299s (at t=389s < 390s) succeeds and slides by 300s again (to t=689s)
+      const tPlus389s = new Date(loginTime.getTime() + 389_000);
+      const touchedAgain = await authService.resolveSessionActor(
+        { rawSessionToken: established.rawSessionToken },
+        tPlus389s,
+      );
+      expect(touchedAgain.session.idleExpiresAt.getTime()).toBe(tPlus389s.getTime() + 300_000);
+
+      // Expired at t = 690s (well under the erroneous 1800s floor!) -> rejected and revoked as IDLE_TIMEOUT_EXPIRED
+      const tPlus690s = new Date(loginTime.getTime() + 690_000);
+      await expect(
+        authService.resolveSessionActor({ rawSessionToken: established.rawSessionToken }, tPlus690s),
+      ).rejects.toThrow(UnauthorizedError);
+      expect(sessionsById.get(established.session.id)?.revocationReason).toBe('IDLE_TIMEOUT_EXPIRED');
+    });
+
+    it('evicts the oldest active sessions with MAX_CONCURRENT_SESSIONS_EXCEEDED when exceeding 5 concurrent sessions per user', async () => {
+      const issuedSessions: Array<{ id: string; rawToken: string }> = [];
+
+      for (let i = 0; i < 6; i++) {
+        const res = await authService.establishAuthenticatedSession(
+          {
+            sub: 'kc-concurrent-limit-sub',
+            email: 'concurrent@example.com',
+            emailVerified: true,
+          },
+          new Date(BASE_NOW.getTime() + i * 1000),
+        );
+        issuedSessions.push({ id: res.session.id, rawToken: res.rawSessionToken });
+      }
+
+      // Oldest session (index 0) must be evicted
+      const evicted = sessionsById.get(issuedSessions[0]!.id);
+      expect(evicted?.revokedAt).not.toBeNull();
+      expect(evicted?.revocationReason).toBe('MAX_CONCURRENT_SESSIONS_EXCEEDED');
+
+      await expect(
+        authService.resolveSessionActor(
+          { rawSessionToken: issuedSessions[0]!.rawToken },
+          new Date(BASE_NOW.getTime() + 10_000),
+        ),
+      ).rejects.toThrow(UnauthorizedError);
+
+      // Sessions 1..5 remain active (5 active total)
+      for (let i = 1; i < 6; i++) {
+        const active = await authService.resolveSessionActor(
+          { rawSessionToken: issuedSessions[i]!.rawToken },
+          new Date(BASE_NOW.getTime() + 10_000),
+        );
+        expect(active.session.id).toBe(issuedSessions[i]!.id);
+      }
+    });
+  });
 });

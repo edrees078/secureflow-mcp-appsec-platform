@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import express from 'express';
+import request from 'supertest';
 import { createLogger } from '../src/logger/logger.js';
+import { createHttpLoggerMiddleware } from '../src/middleware/http-logger.js';
 
 describe('Pino Sensitive Data Redaction', () => {
   it('redacts sensitive headers, tokens, passwords, and cookies from log output', async () => {
@@ -210,6 +213,232 @@ describe('Pino Sensitive Data Redaction', () => {
       'synth-url-cookie',
     ]) {
       expect(loggedData).not.toContain(leaked);
+    }
+  });
+
+  it('redacts OIDC callback authorization codes, state, session_state, and id_token_hint query parameters from HTTP request logs', () => {
+    let loggedData = '';
+    const destination = {
+      write(chunk: string) {
+        loggedData += chunk;
+      },
+    };
+
+    const testLogger = createLogger('info', destination);
+    testLogger.info({
+      req: {
+        method: 'GET',
+        url: '/api/v1/auth/callback?state=synth-oidc-state-secret-999&session_state=synth-kc-sess-888&iss=https%3A%2F%2Fidp.example%2Frealms%2Fsf&code=synth-auth-code-secret-777&id_token_hint=synth-id-hint-666',
+        query: {
+          state: 'synth-oidc-state-secret-999',
+          session_state: 'synth-kc-sess-888',
+          iss: 'https://idp.example/realms/sf',
+          code: 'synth-auth-code-secret-777',
+          id_token_hint: 'synth-id-hint-666',
+        },
+      },
+      err: Object.assign(new Error('Callback failed cleanly'), { code: 'UNAUTHORIZED' }),
+    });
+
+    const parsed = JSON.parse(loggedData);
+    expect(parsed.req.url).toContain('/api/v1/auth/callback?');
+    expect(parsed.req.url).toContain('code=[REDACTED]');
+    expect(parsed.req.url).toContain('state=[REDACTED]');
+    expect(parsed.req.query.code).toBe('[REDACTED]');
+    expect(parsed.req.query.state).toBe('[REDACTED]');
+    expect(parsed.req.query.session_state).toBe('[REDACTED]');
+    expect(parsed.req.query.id_token_hint).toBe('[REDACTED]');
+    expect(parsed.req.query.iss).toBe('https://idp.example/realms/sf');
+    expect(parsed.err.code).toBe('UNAUTHORIZED');
+    for (const secret of [
+      'synth-oidc-state-secret-999',
+      'synth-kc-sess-888',
+      'synth-auth-code-secret-777',
+      'synth-id-hint-666',
+    ]) {
+      expect(loggedData).not.toContain(secret);
+    }
+  });
+
+  it('scrubs OIDC callback code, state, and session_state end-to-end through createHttpLoggerMiddleware child logger bindings', async () => {
+    let loggedData = '';
+    const destination = {
+      write(chunk: string) {
+        loggedData += chunk;
+      },
+    };
+    const testLogger = createLogger('info', destination);
+    const app = express();
+    app.use(createHttpLoggerMiddleware(testLogger));
+    app.get('/api/v1/auth/callback', (_req, res) => {
+      res.status(200).json({ ok: true });
+    });
+
+    const res = await request(app)
+      .get('/api/v1/auth/callback')
+      .query({
+        state: 'synth-e2e-state-secret-111',
+        session_state: 'synth-e2e-session-state-222',
+        code: 'synth-e2e-auth-code-333',
+        iss: 'https://idp.example/realms/secureflow',
+      });
+
+    expect(res.status).toBe(200);
+    const parsed = JSON.parse(loggedData.trim().split('\n').pop()!);
+    expect(parsed.res.statusCode).toBe(200);
+    expect(parsed.req.url).toContain('code=[REDACTED]');
+    expect(parsed.req.url).toContain('state=[REDACTED]');
+    expect(parsed.req.query.code).toBe('[REDACTED]');
+    expect(parsed.req.query.state).toBe('[REDACTED]');
+    expect(parsed.req.query.session_state).toBe('[REDACTED]');
+    expect(parsed.req.query.iss).toBe('https://idp.example/realms/secureflow');
+    for (const secret of [
+      'synth-e2e-state-secret-111',
+      'synth-e2e-session-state-222',
+      'synth-e2e-auth-code-333',
+    ]) {
+      expect(loggedData).not.toContain(secret);
+    }
+  });
+
+  it('redacts OIDC state, nonce, and sensitive tokens from logged HTTP 302 Location headers while preserving the actual HTTP redirect response and safe diagnostics', async () => {
+    let loggedData = '';
+    const destination = {
+      write(chunk: string) {
+        loggedData += chunk;
+      },
+    };
+    const testLogger = createLogger('info', destination);
+    const app = express();
+    app.use(createHttpLoggerMiddleware(testLogger));
+
+    const rawState = 'synth-login-state-secret-84729';
+    const rawNonce = 'synth-login-nonce-secret-95136';
+    const rawTxnCookie = 'synth-oidc-txn-cookie-75319';
+    const expectedRedirectUrl =
+      'https://idp.example/realms/secureflow/protocol/openid-connect/auth' +
+      '?redirect_uri=https%3A%2F%2Fapp.example%2Fapi%2Fv1%2Fauth%2Fcallback' +
+      '&scope=openid+profile+email' +
+      '&response_type=code' +
+      '&code_challenge=public_pkce_challenge_digest' +
+      '&code_challenge_method=S256' +
+      `&state=${rawState}` +
+      `&nonce=${rawNonce}` +
+      '&client_id=secureflow-bff';
+
+    app.get('/api/v1/auth/login', (_req, res) => {
+      res.setHeader(
+        'Set-Cookie',
+        `__Host-sf_oidc_txn=${rawTxnCookie}; Path=/api/v1/auth; HttpOnly; Secure; SameSite=Lax`,
+      );
+      res.redirect(302, expectedRedirectUrl);
+    });
+
+    app.get('/projects', (_req, res) => {
+      res.redirect(302, '/projects?tab=findings&status=OPEN');
+    });
+
+    const loginRes = await request(app)
+      .get('/api/v1/auth/login?returnTo=%2Fprojects');
+
+    // Browser receives the exact unmodified HTTP 302 redirect and cookie
+    expect(loginRes.status).toBe(302);
+    expect(loginRes.headers['location']).toBe(expectedRedirectUrl);
+    expect(loginRes.headers['location']).toContain(rawState);
+    expect(loginRes.headers['location']).toContain(rawNonce);
+
+    const normalRes = await request(app).get('/projects');
+    expect(normalRes.status).toBe(302);
+    expect(normalRes.headers['location']).toBe('/projects?tab=findings&status=OPEN');
+
+    interface HttpRedirectLogEntry {
+      req: { method: string; url: string };
+      res: { statusCode: number; headers: Record<string, string> };
+    }
+
+    const logLines = loggedData
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as HttpRedirectLogEntry);
+    expect(logLines).toHaveLength(2);
+
+    const [loginLog, normalLog] = logLines as [HttpRedirectLogEntry, HttpRedirectLogEntry];
+    expect(loginLog.req.method).toBe('GET');
+    expect(loginLog.req.url).toBe('/api/v1/auth/login?returnTo=%2Fprojects');
+    expect(loginLog.res.statusCode).toBe(302);
+    expect(loginLog.res.headers['set-cookie']).toBe('[REDACTED]');
+    expect(loginLog.res.headers.location).toContain(
+      'https://idp.example/realms/secureflow/protocol/openid-connect/auth?',
+    );
+    expect(loginLog.res.headers.location).toContain('client_id=secureflow-bff');
+    expect(loginLog.res.headers.location).toContain('response_type=code');
+    expect(loginLog.res.headers.location).toContain('state=[REDACTED]');
+    expect(loginLog.res.headers.location).toContain('nonce=[REDACTED]');
+
+    // Non-OIDC redirect parameters remain intact for diagnostics
+    expect(normalLog.res.statusCode).toBe(302);
+    expect(normalLog.res.headers.location).toBe('/projects?tab=findings&status=OPEN');
+
+    for (const secret of [rawState, rawNonce, rawTxnCookie]) {
+      expect(loggedData).not.toContain(secret);
+    }
+  });
+
+  it('redacts OAuth parameters in nested response header objects and Pino child logger bindings without dropping statusCode or error codes', () => {
+    let loggedData = '';
+    const destination = {
+      write(chunk: string) {
+        loggedData += chunk;
+      },
+    };
+    const testLogger = createLogger('info', destination);
+
+    const child = testLogger.child({
+      res: {
+        statusCode: 302,
+        headers: {
+          location:
+            'https://app.example/logout-complete?state=synth-child-state-123&nonce=synth-child-nonce-456&id_token_hint=synth-child-hint-789&session_state=synth-child-sess-012&code=synth-child-code-345',
+          nestedMeta: {
+            redirectTarget:
+              'https://web.example/cb#state=synth-frag-state-678&access_token=synth-frag-token-901',
+          },
+        },
+      },
+    });
+
+    child.warn(
+      {
+        err: Object.assign(new Error('OIDC session mismatch'), {
+          code: 'UNAUTHORIZED',
+        }),
+      },
+      'redirect validation warning',
+    );
+
+    const parsed = JSON.parse(loggedData.trim());
+    expect(parsed.res.statusCode).toBe(302);
+    expect(parsed.err.code).toBe('UNAUTHORIZED');
+    expect(parsed.res.headers.location).toContain('state=[REDACTED]');
+    expect(parsed.res.headers.location).toContain('nonce=[REDACTED]');
+    expect(parsed.res.headers.location).toContain('id_token_hint=[REDACTED]');
+    expect(parsed.res.headers.location).toContain('session_state=[REDACTED]');
+    expect(parsed.res.headers.location).toContain('code=[REDACTED]');
+    expect(parsed.res.headers.nestedMeta.redirectTarget).toContain('state=[REDACTED]');
+    expect(parsed.res.headers.nestedMeta.redirectTarget).toContain(
+      'access_token=[REDACTED]',
+    );
+
+    for (const secret of [
+      'synth-child-state-123',
+      'synth-child-nonce-456',
+      'synth-child-hint-789',
+      'synth-child-sess-012',
+      'synth-child-code-345',
+      'synth-frag-state-678',
+      'synth-frag-token-901',
+    ]) {
+      expect(loggedData).not.toContain(secret);
     }
   });
 });

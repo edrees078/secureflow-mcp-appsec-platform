@@ -26,6 +26,7 @@ export interface AuthRouterOptions {
   readonly authConfig: AuthRuntimeConfig;
   readonly sessionAuthMiddleware: RequestHandler;
   readonly csrfMiddleware: RequestHandler;
+  readonly bodyParsers?: readonly RequestHandler[];
 }
 
 /**
@@ -45,7 +46,14 @@ export interface AuthRouterOptions {
  */
 export function createAuthRouter(options: AuthRouterOptions): ExpressRouter {
   const router = Router();
-  const { authService, flowCoordinator, authConfig, sessionAuthMiddleware, csrfMiddleware } = options;
+  const {
+    authService,
+    flowCoordinator,
+    authConfig,
+    sessionAuthMiddleware,
+    csrfMiddleware,
+    bodyParsers = [],
+  } = options;
 
   // 1. GET /login — Public endpoint initiating OIDC Authorization Code Flow with PKCE
   router.get('/login', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -75,12 +83,17 @@ export function createAuthRouter(options: AuthRouterOptions): ExpressRouter {
         throw new UnauthorizedError('OIDC transaction cookie missing or invalid');
       }
 
-      const host = req.get('host') ?? '127.0.0.1:3000';
-      const protocol = authConfig.cookies.secure ? 'https' : (req.protocol ?? 'http');
-      const callbackUrl = new URL(req.originalUrl, `${protocol}://${host}`);
-
       let completed;
       try {
+        const host = req.get('host') ?? '127.0.0.1:3000';
+        const protocol = authConfig.cookies.secure ? 'https' : (req.protocol ?? 'http');
+        let callbackUrl: URL;
+        try {
+          callbackUrl = new URL(req.originalUrl, `${protocol}://${host}`);
+        } catch {
+          throw new DomainValidationError('Malformed callback host or request URL');
+        }
+
         completed = await flowCoordinator.completeAuthorizationCallback(
           {
             callbackUrl,
@@ -128,8 +141,8 @@ export function createAuthRouter(options: AuthRouterOptions): ExpressRouter {
     });
   });
 
-  // 4. POST /logout — Protected endpoint requiring session authentication and CSRF token
-  router.post('/logout', sessionAuthMiddleware, csrfMiddleware, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  // 4. POST /logout — Protected endpoint requiring session authentication and CSRF token before body parsing
+  router.post('/logout', sessionAuthMiddleware, csrfMiddleware, ...bodyParsers, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const parsedResult = LogoutBodySchema.safeParse(req.body ?? {});
       if (!parsedResult.success) {

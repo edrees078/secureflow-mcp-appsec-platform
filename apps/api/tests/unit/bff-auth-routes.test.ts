@@ -5,7 +5,12 @@ import type { DomainServices, IAuthService } from '@secureflow/domain';
 import type { IOidcClient, VerifiedOidcTokenIdentity } from '../../src/auth/oidc-client.js';
 import type { AuthRuntimeConfig } from '../../src/config/auth.js';
 import { createMockDomainServices } from '../helpers/mock-services.js';
-import { COOKIE_NAME_DEV_SESSION, COOKIE_NAME_DEV_OIDC_TXN } from '../../src/auth/cookies.js';
+import {
+  COOKIE_NAME_DEV_SESSION,
+  COOKIE_NAME_DEV_OIDC_TXN,
+  COOKIE_NAME_PRODUCTION_SESSION,
+  COOKIE_NAME_PRODUCTION_OIDC_TXN,
+} from '../../src/auth/cookies.js';
 
 const ISSUER_URL = 'http://127.0.0.1:8080/realms/secureflow';
 const CLIENT_ID = 'secureflow-bff';
@@ -396,5 +401,113 @@ describe('Gate 4B.3 Integrated BFF Authentication Routes & Session/CSRF Wiring',
     expect(spoofRes.status).toBe(401);
     expect(spoofRes.body.error.code).toBe('UNAUTHORIZED');
     expect(mockServices.projectService.listProjects).not.toHaveBeenCalled();
+  });
+
+  it('fails closed on POST /api/v1/auth/logout before JSON body parsing when unauthenticated (401) or missing CSRF token (403)', async () => {
+    const unauthMalformedRes = await request(app)
+      .post('/api/v1/auth/logout')
+      .set('Content-Type', 'application/json')
+      .send('{broken-json');
+
+    expect(unauthMalformedRes.status).toBe(401);
+    expect(unauthMalformedRes.body.error.code).toBe('UNAUTHORIZED');
+    expect(mockAuthService.revokeSession).not.toHaveBeenCalled();
+
+    const noCsrfMalformedRes = await request(app)
+      .post('/api/v1/auth/logout')
+      .set('Cookie', `${COOKIE_NAME_DEV_SESSION}=${rawSessionToken}`)
+      .set('Origin', ALLOWED_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .send('{broken-json');
+
+    expect(noCsrfMalformedRes.status).toBe(403);
+    expect(noCsrfMalformedRes.body.error.code).toBe('FORBIDDEN');
+    expect(mockAuthService.revokeSession).not.toHaveBeenCalled();
+  });
+
+  it('enforces __Host- cookies in production mode and rejects development cookie downgrade', async () => {
+    const prodOrigin = 'https://app.secureflow.example';
+    const prodConfig: AuthRuntimeConfig = {
+      mode: 'production',
+      authEnabled: true,
+      oidc: {
+        issuerUrl: 'https://idp.secureflow.example/realms/secureflow',
+        clientId: CLIENT_ID,
+        clientSecret: 'prod_secret_bff_client_value_over_32_characters',
+        clientAuthMethod: 'client_secret_basic',
+        redirectUri: 'https://api.secureflow.example/api/v1/auth/callback',
+        allowedRedirectUris: ['https://api.secureflow.example/api/v1/auth/callback'],
+        postLogoutRedirectUri: `${prodOrigin}/login`,
+        allowedPostLogoutRedirectUris: [`${prodOrigin}/login`],
+        scopes: 'openid email profile',
+        clockToleranceSeconds: 30,
+        allowInsecureHttp: false,
+        requestTimeoutSeconds: 5,
+      },
+      session: {
+        idleTimeoutSeconds: 1800,
+        absoluteTimeoutSeconds: 28800,
+        oidcTxnTtlSeconds: 300,
+      },
+      cookies: {
+        mode: 'production',
+        sessionCookieName: COOKIE_NAME_PRODUCTION_SESSION,
+        oidcTxnCookieName: COOKIE_NAME_PRODUCTION_OIDC_TXN,
+        secure: true,
+        httpOnly: true,
+        sameSite: 'Lax',
+        path: '/',
+      },
+      allowedOrigins: [prodOrigin],
+    };
+
+    const prodApp = createApp(mockServices, { authConfig: prodConfig, oidcClient: mockOidcClient });
+
+    // Downgraded dev cookie name must fail closed with 401 in production mode
+    const downgradeRes = await request(prodApp)
+      .get('/api/v1/auth/me')
+      .set('Cookie', `${COOKIE_NAME_DEV_SESSION}=${rawSessionToken}`);
+    expect(downgradeRes.status).toBe(401);
+
+    // /login emits __Host-sf_oidc_txn with Secure; HttpOnly; SameSite=Lax; Path=/ and NO Domain
+    const prodLoginRes = await request(prodApp).get('/api/v1/auth/login');
+    expect(prodLoginRes.status).toBe(302);
+    const loginSetCookies = prodLoginRes.header['set-cookie'] as unknown as string[];
+    const prodTxnHeader = loginSetCookies.find((c) => c.startsWith(`${COOKIE_NAME_PRODUCTION_OIDC_TXN}=`));
+    expect(prodTxnHeader).toBeDefined();
+    expect(prodTxnHeader).toContain('Secure');
+    expect(prodTxnHeader).toContain('HttpOnly');
+    expect(prodTxnHeader).toContain('SameSite=Lax');
+    expect(prodTxnHeader).toContain('Path=/');
+    expect(prodTxnHeader).not.toMatch(/;\s*Domain=/i);
+
+    // Valid __Host-sf_session succeeds on /me
+    const validProdMe = await request(prodApp)
+      .get('/api/v1/auth/me')
+      .set('Cookie', `${COOKIE_NAME_PRODUCTION_SESSION}=${rawSessionToken}`);
+    expect(validProdMe.status).toBe(200);
+  });
+
+  it('rejects duplicate session cookies with 401 and clears OIDC transaction cookie cleanly on callback URL or exchange error', async () => {
+    const duplicateCookieRes = await request(app)
+      .get('/api/v1/auth/me')
+      .set('Cookie', `${COOKIE_NAME_DEV_SESSION}=${rawSessionToken}; ${COOKIE_NAME_DEV_SESSION}=second_token`);
+
+    expect(duplicateCookieRes.status).toBe(401);
+    expect(duplicateCookieRes.body.error.code).toBe('UNAUTHORIZED');
+
+    // Malformed Host header during /callback clears txn cookie and fails with 400 (no 500 leak)
+    const malformedHostRes = await request(app)
+      .get('/api/v1/auth/callback')
+      .set('Host', 'invalid host with spaces')
+      .set('Cookie', `${COOKIE_NAME_DEV_OIDC_TXN}=${rawTxnToken}`)
+      .query({ code: 'auth_code_123', state: stateFixture });
+
+    expect(malformedHostRes.status).toBe(400);
+    expect(malformedHostRes.body.error.code).toBe('VALIDATION_ERROR');
+    const hostErrCookies = malformedHostRes.header['set-cookie'] as unknown as string[];
+    const clearedTxn = hostErrCookies.find((c) => c.startsWith(`${COOKIE_NAME_DEV_OIDC_TXN}=`));
+    expect(clearedTxn).toContain('Max-Age=0');
+    expect(hostErrCookies.some((c) => c.startsWith(`${COOKIE_NAME_DEV_SESSION}=`))).toBe(false);
   });
 });

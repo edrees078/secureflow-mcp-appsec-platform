@@ -84,15 +84,16 @@ export function createApp(
       allowedOrigins: authConfig.allowedOrigins,
     });
 
-    // Mount BFF auth routes under /api/v1/auth
+    // Mount BFF auth routes under /api/v1/auth (POST /logout runs bodyParsers only after sessionAuth & csrf)
     const authRouter = createAuthRouter({
       authService,
       flowCoordinator,
       authConfig,
       sessionAuthMiddleware: sessionAuth,
       csrfMiddleware: csrf,
+      bodyParsers: [jsonParser, urlencodedParser],
     });
-    app.use('/api/v1/auth', jsonParser, urlencodedParser, authRouter);
+    app.use('/api/v1/auth', authRouter);
 
     // Mount protected operational REST endpoints behind sessionAuth and CSRF guards
     const apiRouter = createApiRouter(services);

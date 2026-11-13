@@ -16,7 +16,7 @@ import {
   type TestDatabaseClient,
 } from '@secureflow/domain/testing';
 import { createApp } from '../../src/app.js';
-import { OpenIdConnectClient } from '../../src/auth/oidc-client.js';
+import { OpenIdConnectClient, type IOidcClient } from '../../src/auth/oidc-client.js';
 import type { AuthRuntimeConfig } from '../../src/config/auth.js';
 import { COOKIE_NAME_DEV_SESSION, COOKIE_NAME_DEV_OIDC_TXN } from '../../src/auth/cookies.js';
 
@@ -969,5 +969,419 @@ describe('Gate 4B.3 Real Keycloak & Integrated BFF Authentication Integration Su
         expect(str).not.toContain(liveCsrfToken);
       }
     }
+  });
+
+  it('15. Logout resilience & interrupted SSO non-reactivation: immediate BFF revocation, failed/aborted Keycloak confirmation, and IdP-outage fallback', async () => {
+    // Helper to initiate login and register tracked OIDC txn in DB
+    async function startTrackedLogin(targetApp: Express, returnTo = '/projects') {
+      const loginRes = await request(targetApp).get('/api/v1/auth/login').query({ returnTo });
+      expect(loginRes.status).toBe(302);
+      const setCookies = (loginRes.header['set-cookie'] as unknown as string[] | undefined) ?? [];
+      const txnHeader = setCookies.find((c) => c.startsWith(`${COOKIE_NAME_DEV_OIDC_TXN}=`));
+      expect(txnHeader).toBeDefined();
+      const rawTxnToken = txnHeader!.split(';')[0]!.split('=')[1]!;
+      const txnRow = await testDbClient.query<{ id: string }>(
+        'SELECT id FROM public.oidc_transactions WHERE txn_token_hash = $1;',
+        [hashOpaqueToken(rawTxnToken)],
+      );
+      expect(txnRow.rows.length).toBe(1);
+      createdOidcTxnIds.add(txnRow.rows[0]!.id);
+      return { rawTxnToken, authUrl: loginRes.header['location'] as string };
+    }
+
+    // 1. Fresh Keycloak BFF login
+    const started = await startTrackedLogin(app, '/projects');
+    const kcAuth = await authenticateKeycloakUser(
+      started.authUrl,
+      'dev@secureflow.example',
+      DEV_DEVELOPER_PASSWORD,
+    );
+    const cbRes = await request(app)
+      .get(`/api/v1/auth/callback?${kcAuth.locationUrl.searchParams.toString()}`)
+      .set('Host', '127.0.0.1:3000')
+      .set('Cookie', `${COOKIE_NAME_DEV_OIDC_TXN}=${started.rawTxnToken}`)
+      .set('Accept', 'application/json');
+    expect(cbRes.status).toBe(200);
+
+    const sessId = cbRes.body.data.sessionId as string;
+    const csrfToken = cbRes.body.data.csrfToken as string;
+    createdSessionIds.add(sessId);
+    const setCookies = cbRes.header['set-cookie'] as unknown as string[];
+    const sessCookiePair = setCookies.find((c) => c.startsWith(`${COOKIE_NAME_DEV_SESSION}=`))!.split(';')[0]!;
+
+    // 2. POST /api/v1/auth/logout -> returns endSessionUrl and immediately revokes BFF session BEFORE visiting Keycloak
+    const logoutRes = await request(app)
+      .post('/api/v1/auth/logout')
+      .set('Cookie', sessCookiePair)
+      .set('Origin', ALLOWED_ORIGIN)
+      .set('X-CSRF-Token', csrfToken);
+    expect(logoutRes.status).toBe(200);
+    expect(logoutRes.body.data.loggedOut).toBe(true);
+    const endSessionUrl = logoutRes.body.data.endSessionUrl as string;
+    expect(typeof endSessionUrl).toBe('string');
+
+    // Verify immediate local BFF revocation BEFORE visiting endSessionUrl
+    const preSsoMe = await request(app).get('/api/v1/auth/me').set('Cookie', sessCookiePair);
+    expect(preSsoMe.status).toBe(401);
+    const preSsoProjects = await request(app).get('/api/v1/projects').set('Cookie', sessCookiePair);
+    expect(preSsoProjects.status).toBe(401);
+
+    // 3. Visit Keycloak logout page WITHOUT confirming AND submit a tampered/aborted logout confirmation
+    const confirmPageRes = await fetch(endSessionUrl, {
+      method: 'GET',
+      headers: { Cookie: serializeCookieJar(kcAuth.keycloakCookieJar) },
+      redirect: 'manual',
+    });
+    updateCookieJar(kcAuth.keycloakCookieJar, confirmPageRes);
+    expect(confirmPageRes.status).toBe(200);
+
+    const confirmHtml = await confirmPageRes.text();
+    const confirmActionMatch = confirmHtml.match(/action="([^"]+)"/);
+    expect(confirmActionMatch).not.toBeNull();
+    const confirmActionUrl = new URL(
+      confirmActionMatch![1]!.replace(/&amp;/g, '&'),
+      endSessionUrl,
+    ).toString();
+
+    // Failed/tampered confirmation (bad session_code) rejected/errored by Keycloak
+    const failedConfirmRes = await fetch(confirmActionUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Cookie: serializeCookieJar(kcAuth.keycloakCookieJar),
+      },
+      body: new URLSearchParams({ session_code: 'tampered_invalid_code', confirmLogout: 'Logout' }).toString(),
+      redirect: 'manual',
+    });
+    expect(failedConfirmRes.status).toBeGreaterThanOrEqual(400);
+
+    // Revoked BFF session CANNOT be reactivated by aborted/failed Keycloak SSO logout
+    const afterFailedSsoMe = await request(app).get('/api/v1/auth/me').set('Cookie', sessCookiePair);
+    expect(afterFailedSsoMe.status).toBe(401);
+    const revokedRow = await testDbClient.query<{ revoked_at: Date | null; revoke_reason: string | null }>(
+      'SELECT revoked_at, revoke_reason FROM public.user_sessions WHERE id = $1;',
+      [sessId],
+    );
+    expect(revokedRow.rows[0]!.revoked_at).not.toBeNull();
+    expect(revokedRow.rows[0]!.revoke_reason).toBe('USER_LOGOUT');
+
+    // Cleanly finish Keycloak logout so SSO jar isn't left dangling
+    const cleanConfirmBody = new URLSearchParams();
+    for (const inputMatch of confirmHtml.matchAll(/<input[^>]+>/g)) {
+      const tag = inputMatch[0];
+      const name = tag.match(/name="([^"]+)"/)?.[1];
+      const value = tag.match(/value="([^"]*)"/)?.[1] ?? '';
+      const type = tag.match(/type="([^"]+)"/)?.[1];
+      if (name && (type === 'hidden' || type === 'submit')) {
+        cleanConfirmBody.set(name, value);
+      }
+    }
+    await fetch(confirmActionUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Cookie: serializeCookieJar(kcAuth.keycloakCookieJar),
+      },
+      body: cleanConfirmBody.toString(),
+      redirect: 'manual',
+    });
+
+    // 4. Local logout STILL succeeds (200, endSessionUrl=null, Max-Age=0, DB revoked) when IdP discovery is unavailable
+    const unreachableAuthConfig: AuthRuntimeConfig = {
+      ...authConfig,
+      oidc: {
+        ...authConfig.oidc,
+        issuerUrl: 'http://127.0.0.1:59999/realms/secureflow',
+        requestTimeoutSeconds: 1,
+      },
+    };
+    const outageApp = createApp(domainServices, { authConfig: unreachableAuthConfig });
+    const outageToken = generateOpaqueToken(32);
+    const outageCsrf = generateOpaqueToken(24);
+    const outageSessId = 'bbbbbbbb-bbbb-4bbb-8bbb-151515151515';
+    await testDbClient.query(
+      `INSERT INTO public.user_sessions (
+        id, user_id, session_token_hash, csrf_token, ip_address, user_agent,
+        created_at, last_active_at, idle_expires_at, expires_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), NOW() + INTERVAL '30 minutes', NOW() + INTERVAL '8 hours');`,
+      [outageSessId, liveUserId, hashOpaqueToken(outageToken), outageCsrf, '127.0.0.1', 'Vitest'],
+    );
+    createdSessionIds.add(outageSessId);
+
+    const outageLogoutRes = await request(outageApp)
+      .post('/api/v1/auth/logout')
+      .set('Cookie', `${COOKIE_NAME_DEV_SESSION}=${outageToken}`)
+      .set('Origin', ALLOWED_ORIGIN)
+      .set('X-CSRF-Token', outageCsrf);
+    expect(outageLogoutRes.status).toBe(200);
+    expect(outageLogoutRes.body.data).toEqual({
+      loggedOut: true,
+      endSessionUrl: null,
+    });
+    const outageClearCookies = outageLogoutRes.header['set-cookie'] as unknown as string[];
+    expect(outageClearCookies.find((c) => c.startsWith(`${COOKIE_NAME_DEV_SESSION}=`))).toContain('Max-Age=0');
+
+    const outageAfterMe = await request(outageApp)
+      .get('/api/v1/auth/me')
+      .set('Cookie', `${COOKIE_NAME_DEV_SESSION}=${outageToken}`);
+    expect(outageAfterMe.status).toBe(401);
+  });
+
+  it('16. Session fixation protection: pre-planted sf_session cookie is ignored and replaced on OIDC login callback', async () => {
+    const prePlantedToken = 'attacker_preplanted_fixed_session_token_123456';
+    const preLoginRes = await request(app)
+      .get('/api/v1/auth/login')
+      .set('Cookie', `${COOKIE_NAME_DEV_SESSION}=${prePlantedToken}`)
+      .query({ returnTo: '/projects' });
+    expect(preLoginRes.status).toBe(302);
+
+    const txnHeader = (preLoginRes.header['set-cookie'] as unknown as string[]).find((c) =>
+      c.startsWith(`${COOKIE_NAME_DEV_OIDC_TXN}=`),
+    )!;
+    const rawTxn = txnHeader.split(';')[0]!.split('=')[1]!;
+    const txnRow = await testDbClient.query<{ id: string }>(
+      'SELECT id FROM public.oidc_transactions WHERE txn_token_hash = $1;',
+      [hashOpaqueToken(rawTxn)],
+    );
+    createdOidcTxnIds.add(txnRow.rows[0]!.id);
+
+    const kcAuth = await authenticateKeycloakUser(
+      preLoginRes.header['location'] as string,
+      'dev@secureflow.example',
+      DEV_DEVELOPER_PASSWORD,
+    );
+
+    const cbRes = await request(app)
+      .get(`/api/v1/auth/callback?${kcAuth.locationUrl.searchParams.toString()}`)
+      .set('Host', '127.0.0.1:3000')
+      .set('Cookie', `${COOKIE_NAME_DEV_OIDC_TXN}=${rawTxn}; ${COOKIE_NAME_DEV_SESSION}=${prePlantedToken}`)
+      .set('Accept', 'application/json');
+
+    expect(cbRes.status).toBe(200);
+    createdSessionIds.add(cbRes.body.data.sessionId as string);
+    const issuedCookie = (cbRes.header['set-cookie'] as unknown as string[])
+      .find((c) => c.startsWith(`${COOKIE_NAME_DEV_SESSION}=`))!
+      .split(';')[0]!;
+    const issuedToken = issuedCookie.split('=')[1]!;
+
+    expect(issuedToken).not.toBe(prePlantedToken);
+    expect(issuedToken.length).toBeGreaterThanOrEqual(40);
+
+    // Pre-planted attacker token remains useless (401); newly rotated session succeeds (200)
+    const plantedRes = await request(app)
+      .get('/api/v1/auth/me')
+      .set('Cookie', `${COOKIE_NAME_DEV_SESSION}=${prePlantedToken}`);
+    expect(plantedRes.status).toBe(401);
+
+    const rotatedRes = await request(app)
+      .get('/api/v1/auth/me')
+      .set('Cookie', issuedCookie);
+    expect(rotatedRes.status).toBe(200);
+    expect(rotatedRes.body.data.sessionId).toBe(cbRes.body.data.sessionId);
+  });
+
+  it('17. Live BFF authorization & immediate revocation on membership removal and global role change', async () => {
+    // 1. Live Keycloak Developer session
+    const loginRes = await request(app).get('/api/v1/auth/login').query({ returnTo: '/projects' });
+    const rawTxn = (loginRes.header['set-cookie'] as unknown as string[])
+      .find((c) => c.startsWith(`${COOKIE_NAME_DEV_OIDC_TXN}=`))!
+      .split(';')[0]!
+      .split('=')[1]!;
+    const txnRow = await testDbClient.query<{ id: string }>(
+      'SELECT id FROM public.oidc_transactions WHERE txn_token_hash = $1;',
+      [hashOpaqueToken(rawTxn)],
+    );
+    createdOidcTxnIds.add(txnRow.rows[0]!.id);
+
+    const kcAuth = await authenticateKeycloakUser(
+      loginRes.header['location'] as string,
+      'dev@secureflow.example',
+      DEV_DEVELOPER_PASSWORD,
+    );
+    const cbRes = await request(app)
+      .get(`/api/v1/auth/callback?${kcAuth.locationUrl.searchParams.toString()}`)
+      .set('Host', '127.0.0.1:3000')
+      .set('Cookie', `${COOKIE_NAME_DEV_OIDC_TXN}=${rawTxn}`)
+      .set('Accept', 'application/json');
+    expect(cbRes.status).toBe(200);
+
+    const devSessionId = cbRes.body.data.sessionId as string;
+    const devCsrf = cbRes.body.data.csrfToken as string;
+    createdSessionIds.add(devSessionId);
+    const devSessionCookie = (cbRes.header['set-cookie'] as unknown as string[])
+      .find((c) => c.startsWith(`${COOKIE_NAME_DEV_SESSION}=`))!
+      .split(';')[0]!;
+
+    // 2. Establish Admin BFF session for baseline Admin fixture to create project and manage membership via HTTP
+    const adminUserId = '59c69e57-4a9f-42fd-8e6b-40a357ca9cb5';
+    const adminRawToken = generateOpaqueToken(32);
+    const adminCsrf = generateOpaqueToken(24);
+    const adminSessionId = 'aaaaaaaa-aaaa-4aaa-8aaa-171717171717';
+    await testDbClient.query(
+      `INSERT INTO public.user_sessions (
+        id, user_id, session_token_hash, csrf_token, ip_address, user_agent,
+        created_at, last_active_at, idle_expires_at, expires_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), NOW() + INTERVAL '30 minutes', NOW() + INTERVAL '8 hours');`,
+      [adminSessionId, adminUserId, hashOpaqueToken(adminRawToken), adminCsrf, '127.0.0.1', 'Vitest'],
+    );
+    createdSessionIds.add(adminSessionId);
+    const adminCookie = `${COOKIE_NAME_DEV_SESSION}=${adminRawToken}`;
+
+    const createProjRes = await request(app)
+      .post('/api/v1/projects')
+      .set('Cookie', adminCookie)
+      .set('Origin', ALLOWED_ORIGIN)
+      .set('X-CSRF-Token', adminCsrf)
+      .send({ name: `Gate 4B.4 Live BOLA Project ${Date.now()}` });
+    expect(createProjRes.status).toBe(201);
+    const projId = createProjRes.body.data.id as string;
+    createdProjectIds.add(projId);
+
+    // JIT Developer initially has no project membership -> 404 existence hiding; Admin endpoints -> 403
+    const beforeAddGet = await request(app).get(`/api/v1/projects/${projId}`).set('Cookie', devSessionCookie);
+    expect(beforeAddGet.status).toBe(404);
+
+    const devAuditDenied = await request(app).get('/api/v1/audit-events').set('Cookie', devSessionCookie);
+    expect(devAuditDenied.status).toBe(403);
+
+    const devCreateProjDenied = await request(app)
+      .post('/api/v1/projects')
+      .set('Cookie', devSessionCookie)
+      .set('Origin', ALLOWED_ORIGIN)
+      .set('X-CSRF-Token', devCsrf)
+      .send({ name: 'Unauthorized Dev Project' });
+    expect(devCreateProjDenied.status).toBe(403);
+
+    // Admin adds JIT Developer to project -> immediately accessible using existing session cookie (zero re-login)
+    const addMemberRes = await request(app)
+      .post(`/api/v1/projects/${projId}/members`)
+      .set('Cookie', adminCookie)
+      .set('Origin', ALLOWED_ORIGIN)
+      .set('X-CSRF-Token', adminCsrf)
+      .send({ userId: liveUserId, role: 'DEVELOPER' });
+    expect(addMemberRes.status).toBe(201);
+
+    const whileMemberGet = await request(app).get(`/api/v1/projects/${projId}`).set('Cookie', devSessionCookie);
+    expect(whileMemberGet.status).toBe(200);
+
+    // Admin removes JIT Developer from project -> IMMEDIATELY hidden (404) on next HTTP request without re-login!
+    const removeMemberRes = await request(app)
+      .delete(`/api/v1/projects/${projId}/members/${liveUserId}`)
+      .set('Cookie', adminCookie)
+      .set('Origin', ALLOWED_ORIGIN)
+      .set('X-CSRF-Token', adminCsrf);
+    expect(removeMemberRes.status).toBe(204);
+
+    const afterRemoveGet = await request(app).get(`/api/v1/projects/${projId}`).set('Cookie', devSessionCookie);
+    expect(afterRemoveGet.status).toBe(404);
+
+    // Global role change -> IMMEDIATELY revokes live Keycloak BFF session (401 on next HTTP request)
+    await domainServices.authService.updateUserGlobalRole(
+      {
+        id: adminUserId,
+        sub: 'bootstrap-admin-fixture',
+        email: 'admin@secureflow.local',
+        globalRole: 'ADMIN',
+        projectMemberships: [],
+        hasProjectRole: () => false,
+        getProjectRole: () => null,
+      },
+      liveUserId,
+      { globalRole: 'ANALYST', justification: 'Gate 4B.4 live session revocation check' },
+    );
+
+    const afterRoleChangeMe = await request(app).get('/api/v1/auth/me').set('Cookie', devSessionCookie);
+    expect(afterRoleChangeMe.status).toBe(401);
+  });
+
+  it('18. Unverified email fails closed (403 + audit event + zero session) and short idleTimeoutSeconds is preserved in PostgreSQL', async () => {
+    const unverifiedIdentity = {
+      issuer: KEYCLOAK_ISSUER,
+      sub: 'idp-sub-unverified-gate4b4',
+      email: 'unverified-gate4b4@secureflow.example',
+      emailVerified: false,
+      displayName: 'Unverified User',
+      oidcSid: 'sid-unverified',
+      audience: CLIENT_ID,
+    };
+    const mockUnverifiedOidc: IOidcClient = {
+      discover: async () => ({
+        issuer: KEYCLOAK_ISSUER,
+        authorizationEndpoint: `${KEYCLOAK_ISSUER}/protocol/openid-connect/auth`,
+        tokenEndpoint: `${KEYCLOAK_ISSUER}/protocol/openid-connect/token`,
+        jwksUri: `${KEYCLOAK_ISSUER}/protocol/openid-connect/certs`,
+        supportsPkceS256: true,
+      }),
+      buildAuthorizationUrl: async (params) =>
+        new URL(`${KEYCLOAK_ISSUER}/protocol/openid-connect/auth?state=${params.state}`),
+      buildEndSessionUrl: async () => null,
+      exchangeAuthorizationCode: async () => unverifiedIdentity,
+      clearCache: () => undefined,
+    };
+
+    const unverifiedApp = createApp(domainServices, { authConfig, oidcClient: mockUnverifiedOidc });
+    const loginRes = await request(unverifiedApp).get('/api/v1/auth/login');
+    expect(loginRes.status).toBe(302);
+    const txnCookie = (loginRes.header['set-cookie'] as unknown as string[])
+      .find((c) => c.startsWith(`${COOKIE_NAME_DEV_OIDC_TXN}=`))!
+      .split(';')[0]!;
+    const rawTxn = txnCookie.split('=')[1]!;
+    const txnRow = await testDbClient.query<{ id: string }>(
+      'SELECT id FROM public.oidc_transactions WHERE txn_token_hash = $1;',
+      [hashOpaqueToken(rawTxn)],
+    );
+    createdOidcTxnIds.add(txnRow.rows[0]!.id);
+    const state = new URL(loginRes.header['location'] as string).searchParams.get('state')!;
+
+    const cbRes = await request(unverifiedApp)
+      .get('/api/v1/auth/callback')
+      .query({ code: 'synth_code_unverified', state })
+      .set('Host', '127.0.0.1:3000')
+      .set('Cookie', txnCookie)
+      .set('Accept', 'application/json');
+
+    expect(cbRes.status).toBe(403);
+    expect(cbRes.body.error.code).toBe('FORBIDDEN');
+    const cbCookies = cbRes.header['set-cookie'] as unknown as string[];
+    expect(cbCookies.find((c) => c.startsWith(`${COOKIE_NAME_DEV_OIDC_TXN}=`))).toContain('Max-Age=0');
+    expect(cbCookies.some((c) => c.startsWith(`${COOKIE_NAME_DEV_SESSION}=`))).toBe(false);
+
+    const userCreatedCheck = await testDbClient.query<{ id: string }>(
+      'SELECT id FROM public.users WHERE sub = $1 OR lower(email) = lower($2);',
+      [unverifiedIdentity.sub, unverifiedIdentity.email],
+    );
+    expect(userCreatedCheck.rows.length).toBe(0);
+
+    // Short idleTimeoutSeconds (< 30m) preservation against PostgreSQL
+    const t0 = new Date(Date.now());
+    const liveUserRow = await testDbClient.query<{ sub: string; email: string }>(
+      'SELECT sub, email FROM public.users WHERE id = $1;',
+      [liveUserId],
+    );
+    const shortIdle = await domainServices.authService.establishAuthenticatedSession(
+      {
+        sub: liveUserRow.rows[0]!.sub,
+        email: liveUserRow.rows[0]!.email,
+        emailVerified: true,
+        idleTimeoutSeconds: 180,
+        absoluteTimeoutSeconds: 3600,
+      },
+      t0,
+    );
+    createdSessionIds.add(shortIdle.session.id);
+
+    const tPlus90s = new Date(t0.getTime() + 90_000);
+    const touched = await domainServices.authService.resolveSessionActor(
+      { rawSessionToken: shortIdle.rawSessionToken },
+      tPlus90s,
+    );
+    expect(touched.session.idleExpiresAt.getTime()).toBe(tPlus90s.getTime() + 180_000);
+
+    await expect(
+      domainServices.authService.resolveSessionActor(
+        { rawSessionToken: shortIdle.rawSessionToken },
+        new Date(tPlus90s.getTime() + 181_000),
+      ),
+    ).rejects.toThrow(/idle timeout/i);
   });
 });

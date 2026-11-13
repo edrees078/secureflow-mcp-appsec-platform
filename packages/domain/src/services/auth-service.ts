@@ -820,10 +820,10 @@ export class AuthService implements IAuthService {
     // Sliding idle window update (debounced to >= 60s elapsed since lastActivityAt)
     const elapsedSinceLastActivityMs = now.getTime() - session.lastActivityAt.getTime();
     if (elapsedSinceLastActivityMs >= SLIDING_IDLE_TOUCH_THRESHOLD_MS) {
-      const configuredIdleWindowMs = Math.max(
-        DEFAULT_IDLE_TIMEOUT_MS,
-        session.idleExpiresAt.getTime() - session.lastActivityAt.getTime(),
-      );
+      const derivedIdleWindowMs =
+        session.idleExpiresAt.getTime() - session.lastActivityAt.getTime();
+      const configuredIdleWindowMs =
+        derivedIdleWindowMs > 0 ? derivedIdleWindowMs : DEFAULT_IDLE_TIMEOUT_MS;
       const nextIdleExpiresAt = new Date(
         Math.min(session.expiresAt.getTime(), now.getTime() + configuredIdleWindowMs),
       );

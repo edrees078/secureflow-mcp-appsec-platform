@@ -31,6 +31,10 @@ const SENSITIVE_AUDIT_STATE_KEYS: ReadonlySet<string> = new Set([
   'accesstoken',
   'refreshtoken',
   'idtoken',
+  'idtokenhint',
+  'sessionstate',
+  'nonce',
+  'logouttoken',
   'sessiontoken',
   'rawsessiontoken',
   'rawtxntoken',
@@ -66,7 +70,11 @@ const EMBEDDED_CREDENTIAL_PATTERNS: ReadonlyArray<{
     replacement: 'Bearer [REDACTED]',
   },
   {
-    regex: /\b(?:client_secret|code_verifier|access_token|refresh_token|id_token|csrf_token)=[^\s&;,'"`]+/gi,
+    regex: /([?&#](?:code|state|nonce|session_state|id_token_hint|code_verifier|client_secret|access_token|refresh_token|id_token|csrf_token|authorization_code|logout_token)=)[^\s&;,'"`#]+/gi,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    regex: /\b(?:client_secret|code_verifier|access_token|refresh_token|id_token|id_token_hint|csrf_token|authorization_code|session_state|logout_token|nonce)=(?!\[REDACTED\])[^\s&;,'"`#]+/gi,
     replacement: '[REDACTED]',
   },
   {
