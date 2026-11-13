@@ -32,7 +32,7 @@ export const envSchema = z
     LOG_LEVEL: z
       .enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
       .default('info'),
-    CORS_ORIGIN: z.string().min(1).default('http://localhost:5173'),
+    CORS_ORIGIN: z.string().min(1).default('http://127.0.0.1:5173,http://localhost:5173'),
     DATABASE_URL: z.string().trim().optional(),
     AUTH_ENABLED: z.enum(['true', 'false']).default('false'),
     OIDC_ISSUER_URL: z.string().trim().optional(),

@@ -51,7 +51,7 @@ export function createApp(
   app.use(requestIdMiddleware);
 
   // 2. HTTP Security headers & CORS
-  const [helmetMiddleware, corsMiddleware] = createSecurityMiddleware();
+  const [helmetMiddleware, corsMiddleware] = createSecurityMiddleware(authConfig?.allowedOrigins);
   if (helmetMiddleware) app.use(helmetMiddleware);
   if (corsMiddleware) app.use(corsMiddleware);
 

@@ -174,7 +174,7 @@ export function normalizeAndValidateRedirectUri(
 const RawAuthEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   AUTH_ENABLED: z.string().optional(),
-  CORS_ORIGIN: z.string().trim().min(1).default('http://localhost:5173'),
+  CORS_ORIGIN: z.string().trim().min(1).default('http://127.0.0.1:5173,http://localhost:5173'),
   OIDC_ISSUER_URL: z.string().trim().optional(),
   OIDC_CLIENT_ID: z.string().trim().optional(),
   OIDC_CLIENT_SECRET: z.string().trim().optional(),

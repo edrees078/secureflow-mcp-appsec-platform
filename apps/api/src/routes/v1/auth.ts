@@ -14,6 +14,51 @@ import {
   readSessionCookie,
 } from '../../auth/cookies.js';
 
+const LOCAL_LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+function resolveBrowserPostLoginRedirect(
+  req: Request,
+  authConfig: AuthRuntimeConfig,
+  returnTo: string,
+): string {
+  if (authConfig.mode === 'production') {
+    return returnTo;
+  }
+
+  const requestHost = req.get('host')?.trim();
+  if (!requestHost) {
+    return returnTo;
+  }
+
+  let requestUrl: URL;
+  try {
+    requestUrl = new URL(`http://${requestHost}`);
+  } catch {
+    return returnTo;
+  }
+
+  const requestHostname = requestUrl.hostname.toLowerCase();
+  if (!LOCAL_LOOPBACK_HOSTNAMES.has(requestHostname)) {
+    return returnTo;
+  }
+
+  for (const allowedOrigin of authConfig.allowedOrigins) {
+    try {
+      const originUrl = new URL(allowedOrigin);
+      if (
+        originUrl.hostname.toLowerCase() === requestHostname &&
+        originUrl.host !== requestUrl.host
+      ) {
+        return new URL(returnTo, originUrl.origin).toString();
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return returnTo;
+}
+
 const LogoutBodySchema = z
   .object({
     postLogoutRedirectUri: z.string().trim().min(1).max(2048).optional(),
@@ -123,7 +168,8 @@ export function createAuthRouter(options: AuthRouterOptions): ExpressRouter {
           },
         });
       } else {
-        res.redirect(302, completed.returnTo);
+        const redirectTarget = resolveBrowserPostLoginRedirect(req, authConfig, completed.returnTo);
+        res.redirect(302, redirectTarget);
       }
     } catch (err) {
       next(err);

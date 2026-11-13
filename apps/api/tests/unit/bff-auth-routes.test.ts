@@ -510,4 +510,86 @@ describe('Gate 4B.3 Integrated BFF Authentication Routes & Session/CSRF Wiring',
     expect(clearedTxn).toContain('Max-Age=0');
     expect(hostErrCookies.some((c) => c.startsWith(`${COOKIE_NAME_DEV_SESSION}=`))).toBe(false);
   });
+
+  it('GET /api/v1/auth/callback browser HTML redirect returns to allowlisted same-hostname frontend origin in dev while staying relative in production', async () => {
+    const devSameHostConfig: AuthRuntimeConfig = {
+      ...authConfig,
+      allowedOrigins: ['http://127.0.0.1:5173'],
+    };
+    const devSameHostApp = createApp(mockServices, {
+      authConfig: devSameHostConfig,
+      oidcClient: mockOidcClient,
+    });
+
+    const devCallbackRedirect = await request(devSameHostApp)
+      .get('/api/v1/auth/callback')
+      .set('Host', '127.0.0.1:3000')
+      .set('Accept', 'text/html')
+      .set('Cookie', `${COOKIE_NAME_DEV_OIDC_TXN}=${rawTxnToken}`)
+      .query({ code: 'auth_code_123', state: stateFixture });
+
+    expect(devCallbackRedirect.status).toBe(302);
+    expect(devCallbackRedirect.header['location']).toBe(
+      'http://127.0.0.1:5173/projects/00000000-0000-0000-0000-000000000001',
+    );
+
+    const proxiedCallbackRedirect = await request(devSameHostApp)
+      .get('/api/v1/auth/callback')
+      .set('Host', '127.0.0.1:5173')
+      .set('Accept', 'text/html')
+      .set('Cookie', `${COOKIE_NAME_DEV_OIDC_TXN}=${rawTxnToken}`)
+      .query({ code: 'auth_code_123', state: stateFixture });
+
+    expect(proxiedCallbackRedirect.status).toBe(302);
+    expect(proxiedCallbackRedirect.header['location']).toBe(
+      '/projects/00000000-0000-0000-0000-000000000001',
+    );
+
+    const prodConfig: AuthRuntimeConfig = {
+      mode: 'production',
+      authEnabled: true,
+      oidc: {
+        issuerUrl: 'https://idp.secureflow.example/realms/secureflow',
+        clientId: CLIENT_ID,
+        clientSecret: 'prod_secret_bff_client_value_over_32_characters',
+        clientAuthMethod: 'client_secret_basic',
+        redirectUri: 'https://app.secureflow.example/api/v1/auth/callback',
+        allowedRedirectUris: ['https://app.secureflow.example/api/v1/auth/callback'],
+        postLogoutRedirectUri: 'https://app.secureflow.example/login',
+        allowedPostLogoutRedirectUris: ['https://app.secureflow.example/login'],
+        scopes: 'openid email profile',
+        clockToleranceSeconds: 30,
+        allowInsecureHttp: false,
+        requestTimeoutSeconds: 5,
+      },
+      session: {
+        idleTimeoutSeconds: 1800,
+        absoluteTimeoutSeconds: 28800,
+        oidcTxnTtlSeconds: 300,
+      },
+      cookies: {
+        mode: 'production',
+        sessionCookieName: COOKIE_NAME_PRODUCTION_SESSION,
+        oidcTxnCookieName: COOKIE_NAME_PRODUCTION_OIDC_TXN,
+        secure: true,
+        httpOnly: true,
+        sameSite: 'Lax',
+        path: '/',
+      },
+      allowedOrigins: ['https://app.secureflow.example'],
+    };
+    const prodApp = createApp(mockServices, { authConfig: prodConfig, oidcClient: mockOidcClient });
+
+    const prodCallbackRedirect = await request(prodApp)
+      .get('/api/v1/auth/callback')
+      .set('Host', 'app.secureflow.example')
+      .set('Accept', 'text/html')
+      .set('Cookie', `${COOKIE_NAME_PRODUCTION_OIDC_TXN}=${rawTxnToken}`)
+      .query({ code: 'auth_code_123', state: stateFixture });
+
+    expect(prodCallbackRedirect.status).toBe(302);
+    expect(prodCallbackRedirect.header['location']).toBe(
+      '/projects/00000000-0000-0000-0000-000000000001',
+    );
+  });
 });

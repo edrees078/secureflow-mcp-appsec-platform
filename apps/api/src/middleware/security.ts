@@ -3,7 +3,9 @@ import cors from 'cors';
 import type { RequestHandler } from 'express';
 import { env } from '../config/env.js';
 
-export function createSecurityMiddleware(): RequestHandler[] {
+export function createSecurityMiddleware(
+  explicitAllowedOrigins?: readonly string[],
+): RequestHandler[] {
   const isProduction = env.NODE_ENV === 'production';
 
   const helmetOptions = isProduction
@@ -37,7 +39,10 @@ export function createSecurityMiddleware(): RequestHandler[] {
         return;
       }
 
-      const allowedOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim());
+      const allowedOrigins =
+        explicitAllowedOrigins && explicitAllowedOrigins.length > 0
+          ? explicitAllowedOrigins
+          : env.CORS_ORIGIN.split(',').map((o) => o.trim());
 
       if (allowedOrigins.includes(requestOrigin)) {
         callback(null, true);

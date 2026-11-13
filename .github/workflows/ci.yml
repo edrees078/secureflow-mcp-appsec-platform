@@ -77,3 +77,9 @@ jobs:
 
       - name: Run Express API Integration Tests
         run: pnpm run test:api
+
+      - name: Build Frontend Production Bundle (Vite)
+        run: pnpm --filter @secureflow/web run build
+
+      - name: Run Frontend Authentication & Config Tests
+        run: pnpm run test:web
